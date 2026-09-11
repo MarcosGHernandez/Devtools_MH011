@@ -56,24 +56,6 @@ public static class DbInitializer
             try { await context.Database.ExecuteSqlRawAsync("ALTER TABLE Projects ADD COLUMN FrontendStack TEXT;", cancellationToken); } catch { }
             try { await context.Database.ExecuteSqlRawAsync("ALTER TABLE Projects ADD COLUMN DatabaseType TEXT;", cancellationToken); } catch { }
             try { await context.Database.ExecuteSqlRawAsync("ALTER TABLE Projects ADD COLUMN LatestBlueprintJson TEXT;", cancellationToken); } catch { }
-
-            // Clean up any misplaced attendance messages that got attached to MyNewProject
-            try
-            {
-                await context.Database.ExecuteSqlRawAsync("""
-                    DELETE FROM "PlanningMessages" 
-                    WHERE "ProjectId" = '3a7ef7c8-146b-44d0-abdf-a373effa3bfb' 
-                      AND ("Content" LIKE '%asistencia%docente%' OR "Content" LIKE '%registro%asistencia%');
-                """, cancellationToken);
-
-                await context.Database.ExecuteSqlRawAsync("""
-                    UPDATE "Projects" 
-                    SET "Description" = 'SaaS de logística con Monolito Modular y PostgreSQL'
-                    WHERE "Id" = '3a7ef7c8-146b-44d0-abdf-a373effa3bfb'
-                      AND "Description" LIKE '%asistencia%';
-                """, cancellationToken);
-            }
-            catch { }
         }
         catch
         {

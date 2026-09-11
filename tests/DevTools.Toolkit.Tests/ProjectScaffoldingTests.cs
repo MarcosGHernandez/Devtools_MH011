@@ -274,20 +274,20 @@ public class ProjectScaffoldingTests
     {
         // Arrange
         var service = new ProjectScaffoldingService();
-        var bp = CreateTestBlueprint("AttendanceSystem");
+        var bp = CreateTestBlueprint("EnterpriseSystem");
 
         // Act
         var agentsMd = await service.GenerateAgentsMarkdownAsync(bp);
 
         // Assert
         agentsMd.Should().NotBeNullOrWhiteSpace();
-        agentsMd.Should().Contain("AttendanceSystem");
+        agentsMd.Should().Contain("EnterpriseSystem");
         agentsMd.Should().Contain("Google Antigravity");
         agentsMd.Should().Contain("Clean Architecture");
-        agentsMd.Should().Contain("src/AttendanceSystem.Domain");
-        agentsMd.Should().Contain("src/AttendanceSystem.Application");
-        agentsMd.Should().Contain("src/AttendanceSystem.Infrastructure");
-        agentsMd.Should().Contain("src/AttendanceSystem.Api");
+        agentsMd.Should().Contain("src/EnterpriseSystem.Domain");
+        agentsMd.Should().Contain("src/EnterpriseSystem.Application");
+        agentsMd.Should().Contain("src/EnterpriseSystem.Infrastructure");
+        agentsMd.Should().Contain("src/EnterpriseSystem.Api");
         agentsMd.Should().Contain("dotnet build");
         agentsMd.Should().Contain("dotnet test --nologo");
         agentsMd.Should().Contain("ISO/IEC 25010");
