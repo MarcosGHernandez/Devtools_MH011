@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FrontendDesignSystemSpec",
+  "type": "object",
+  "required": ["themeName", "typography", "colorPalette", "spacingScale", "components"],
+  "properties": {
+    "themeName": { "type": "string" },
+    "typography": {
+      "type": "object",
+      "properties": {
+        "sansFont": { "type": "string" },
+        "monoFont": { "type": "string" },
+        "scale": { "type": "object" }
+      }
+    },
+    "colorPalette": {
+      "type": "object",
+      "properties": {
+        "background": { "type": "string" },
+        "surface": { "type": "string" },
+        "border": { "type": "string" },
+        "textPrimary": { "type": "string" },
+        "accent": { "type": "string" }
+      }
+    },
+    "spacingScale": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "tokensUsed": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

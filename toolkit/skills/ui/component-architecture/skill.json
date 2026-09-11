@@ -1,0 +1,46 @@
+{
+  "id": "component-architecture",
+  "name": "Frontend Component Architecture & Hierarchy Designer",
+  "category": "ui",
+  "version": "1.0.0",
+  "description": "Decomposes complex page layouts into reusable atomic components (atoms, molecules, organisms), defines TypeScript prop interfaces, recommends state hoisting strategies, and enforces accessibility boundaries.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "screenName": {
+        "type": "string",
+        "description": "Name of the screen, view, or feature (e.g. AnalyticsDashboard, CheckoutFlow)."
+      },
+      "targetFramework": {
+        "type": "string",
+        "enum": ["React", "Blazor", "Vue", "Svelte", "Vanilla-WebComponents"],
+        "default": "React",
+        "description": "Target UI framework."
+      },
+      "requirements": {
+        "type": "string",
+        "description": "Description of widgets, interactions, and data feeds in this view."
+      }
+    },
+    "required": ["screenName", "requirements"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "componentTree": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "componentName": { "type": "string" },
+            "level": { "type": "string", "enum": ["Atom", "Molecule", "Organism", "Template"] },
+            "propsContract": { "type": "string" },
+            "stateOwner": { "type": "string" },
+            "a11yRole": { "type": "string" }
+          }
+        }
+      },
+      "recommendedStateManagement": { "type": "string" }
+    }
+  }
+}

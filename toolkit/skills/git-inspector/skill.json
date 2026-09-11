@@ -1,0 +1,38 @@
+{
+  "id": "git-inspector",
+  "name": "Git Diff & Workspace Inspector",
+  "description": "Inspects git repository status, staged diffs, unstaged changes, and recent commit history to provide context for code review and PR generation.",
+  "version": "1.0.0",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "repositoryPath": {
+        "type": "string",
+        "default": ".",
+        "description": "Path to the git repository root."
+      },
+      "scope": {
+        "type": "string",
+        "enum": ["staged", "unstaged", "all", "last-commit"],
+        "default": "staged",
+        "description": "The scope of git diffs to inspect."
+      },
+      "maxDiffLines": {
+        "type": "integer",
+        "default": 1000,
+        "description": "Maximum number of diff lines to return to avoid token saturation."
+      }
+    }
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "currentBranch": { "type": "string" },
+      "changedFiles": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "diff": { "type": "string" }
+    }
+  }
+}

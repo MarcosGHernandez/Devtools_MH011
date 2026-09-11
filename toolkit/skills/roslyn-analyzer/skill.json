@@ -1,0 +1,55 @@
+{
+  "id": "roslyn-analyzer",
+  "name": "Roslyn Workspace & Diagnostics Analyzer",
+  "description": "Performs static semantic analysis on C# code files or projects using the Roslyn compiler API. Returns compiler diagnostics, warnings, syntax errors, and architectural metrics.",
+  "version": "1.0.0",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "targetPath": {
+        "type": "string",
+        "description": "Absolute or relative path to the C# source file (.cs), project (.csproj), or solution (.sln) to analyze."
+      },
+      "minSeverity": {
+        "type": "string",
+        "enum": ["Hidden", "Info", "Warning", "Error"],
+        "default": "Warning",
+        "description": "Minimum severity level of diagnostics to report."
+      },
+      "includeMetrics": {
+        "type": "boolean",
+        "default": true,
+        "description": "Whether to calculate cognitive and cyclomatic complexity metrics."
+      }
+    },
+    "required": ["targetPath"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "diagnosticsCount": { "type": "integer" },
+      "diagnostics": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "severity": { "type": "string" },
+            "message": { "type": "string" },
+            "file": { "type": "string" },
+            "line": { "type": "integer" },
+            "character": { "type": "integer" }
+          }
+        }
+      },
+      "metrics": {
+        "type": "object",
+        "properties": {
+          "cyclomaticComplexity": { "type": "integer" },
+          "linesOfCode": { "type": "integer" },
+          "maintainabilityIndex": { "type": "number" }
+        }
+      }
+    }
+  }
+}

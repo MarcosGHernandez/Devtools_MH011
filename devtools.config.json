@@ -1,0 +1,29 @@
+{
+  "$schema": "https://devtools.ai/schemas/config.v1.json",
+  "toolkit": {
+    "path": "./toolkit",
+    "autoReload": true
+  },
+  "ai": {
+    "defaultProvider": "ollama",
+    "providers": {
+      "offline": {
+        "modelId": "deterministic-heuristics",
+        "endpoint": null
+      },
+      "ollama": {
+        "endpoint": "http://localhost:11434/v1",
+        "modelId": "qwen2.5-coder:7b"
+      },
+      "openai": {
+        "apiKeyEnvironmentVariable": "OPENAI_API_KEY",
+        "modelId": "gpt-4o"
+      }
+    }
+  },
+  "ui": {
+    "theme": "classic-minimalist",
+    "tableBorder": "rounded",
+    "compact": true
+  }
+}

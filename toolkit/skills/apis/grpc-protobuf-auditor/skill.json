@@ -1,0 +1,35 @@
+{
+  "id": "grpc-protobuf-auditor",
+  "name": "gRPC & Protocol Buffers Compatibility Auditor",
+  "category": "apis",
+  "version": "1.0.0",
+  "description": "Audits .proto files and gRPC service definitions for backwards compatibility, field number reuse violations, reserved tags, and streaming memory safety.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "currentProtoPath": {
+        "type": "string",
+        "description": "Path to the updated .proto file."
+      },
+      "previousProtoPath": {
+        "type": "string",
+        "description": "Optional path to the previous version of the .proto file for delta breaking change detection."
+      }
+    },
+    "required": ["currentProtoPath"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "isBackwardsCompatible": { "type": "boolean" },
+      "breakingChanges": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "warnings": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

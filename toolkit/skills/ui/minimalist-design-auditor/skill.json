@@ -1,0 +1,36 @@
+{
+  "id": "ui-minimalist-design-auditor",
+  "name": "Classic Minimalist UI & Design System Auditor",
+  "category": "ui",
+  "version": "1.0.0",
+  "description": "Evaluates HTML/CSS/UI components against classic minimalist design principles: restrained color palette, subtle borders, high typographic hierarchy, adequate whitespace/density, and absence of visual clutter.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "uiSourceCode": {
+        "type": "string",
+        "description": "HTML, CSS, React JSX, or Blazor razor component markup."
+      },
+      "enforceDarkMode": {
+        "type": "boolean",
+        "default": true,
+        "description": "Verify high-contrast slate/dark mode color tokens."
+      }
+    },
+    "required": ["uiSourceCode"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "minimalistScore": { "type": "integer" },
+      "visualClutterIssues": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "typographyRecommendations": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

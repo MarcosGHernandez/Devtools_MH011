@@ -1,0 +1,47 @@
+{
+  "id": "test-runner",
+  "name": "DotNet Test Runner & Analyzer",
+  "description": "Executes dotnet test on specified test projects or filters, parses trx/console output, and returns structured execution summaries and failed assertion stack traces.",
+  "version": "1.0.0",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "projectOrSolutionPath": {
+        "type": "string",
+        "description": "Path to the test project (.csproj) or test solution (.sln)."
+      },
+      "filter": {
+        "type": "string",
+        "description": "Optional test filter expression (e.g. FullyQualifiedName~MyNamespace)."
+      },
+      "collectCoverage": {
+        "type": "boolean",
+        "default": false,
+        "description": "Whether to collect code coverage metrics."
+      }
+    },
+    "required": ["projectOrSolutionPath"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "passed": { "type": "boolean" },
+      "total": { "type": "integer" },
+      "passedCount": { "type": "integer" },
+      "failedCount": { "type": "integer" },
+      "skippedCount": { "type": "integer" },
+      "durationMs": { "type": "number" },
+      "failures": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "testName": { "type": "string" },
+            "errorMessage": { "type": "string" },
+            "stackTrace": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

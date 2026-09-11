@@ -1,0 +1,42 @@
+{
+  "$schema": "https://devtools.ai/schemas/rules.v1.json",
+  "category": "CodeReview",
+  "rules": [
+    {
+      "id": "SEC001",
+      "name": "NoHardcodedSecrets",
+      "severity": "CRITICAL",
+      "description": "Hardcoded API keys, passwords, connection strings or bearer tokens must never be committed."
+    },
+    {
+      "id": "ASYNC001",
+      "name": "AvoidSyncOverAsync",
+      "severity": "HIGH",
+      "description": "Never use .Result, .Wait(), or Task.WaitAll() on asynchronous operations as it leads to thread pool starvation and deadlocks."
+    },
+    {
+      "id": "ARCH001",
+      "name": "DependencyDirection",
+      "severity": "HIGH",
+      "description": "Domain layer must have zero dependencies on Infrastructure or UI layers."
+    },
+    {
+      "id": "ERR001",
+      "name": "NoSilentExceptionSwallowing",
+      "severity": "HIGH",
+      "description": "Catch blocks must never be empty or swallow exceptions without logging or re-throwing."
+    },
+    {
+      "id": "SOLID001",
+      "name": "SingleResponsibilityViolation",
+      "severity": "MEDIUM",
+      "description": "Classes exceeding high coupling or multiple divergent responsibilities must be refactored."
+    },
+    {
+      "id": "PERF001",
+      "name": "AvoidExcessiveAllocations",
+      "severity": "MEDIUM",
+      "description": "Avoid creating unnecessary collections or string concatenations in repetitive loops; prefer StringBuilder or Span<T>."
+    }
+  ]
+}

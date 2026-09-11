@@ -1,0 +1,29 @@
+{
+  "$schema": "./schemas/devtools.config.schema.json",
+  "toolkit": {
+    "path": "./toolkit",
+    "autoReload": true
+  },
+  "ai": {
+    "defaultProvider": "openai",
+    "providers": {
+      "openai": {
+        "apiKeyEnvironmentVariable": "OPENAI_API_KEY",
+        "modelId": "gpt-4o"
+      },
+      "anthropic": {
+        "apiKeyEnvironmentVariable": "ANTHROPIC_API_KEY",
+        "modelId": "claude-3-5-sonnet-20241022"
+      },
+      "ollama": {
+        "endpoint": "http://localhost:11434",
+        "modelId": "qwen2.5-coder:7b"
+      }
+    }
+  },
+  "ui": {
+    "theme": "classic-minimalist",
+    "tableBorder": "minimal",
+    "compact": true
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "ui-accessibility-wcag",
+  "name": "WCAG 2.1 Accessibility & A11y Auditor",
+  "category": "ui",
+  "version": "1.0.0",
+  "description": "Scans UI components and markup for WCAG 2.1 AA/AAA compliance: color contrast ratios, ARIA landmarks, form input labels, image alt text, and keyboard focusability.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "markupOrComponent": {
+        "type": "string",
+        "description": "HTML or component source code to evaluate."
+      },
+      "targetLevel": {
+        "type": "string",
+        "enum": ["A", "AA", "AAA"],
+        "default": "AA",
+        "description": "Target WCAG conformance level."
+      }
+    },
+    "required": ["markupOrComponent"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "compliant": { "type": "boolean" },
+      "contrastRatioIssues": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "ariaViolations": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

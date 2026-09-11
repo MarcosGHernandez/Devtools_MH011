@@ -1,0 +1,35 @@
+{
+  "id": "streaming-idempotency",
+  "name": "Stream Processing & Idempotent Consumer Auditor",
+  "category": "pipelines",
+  "version": "1.0.0",
+  "description": "Audits message consumers (Kafka, RabbitMQ, Azure Service Bus) for exactly-once processing semantics, out-of-order delivery tolerance, deduplication keys, and dead-letter queue (DLQ) retry policies.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "consumerSourceCode": {
+        "type": "string",
+        "description": "Consumer implementation code in C#, Python, or Go."
+      },
+      "messageBroker": {
+        "type": "string",
+        "enum": ["Kafka", "RabbitMQ", "AzureServiceBus", "AmazonSQS"],
+        "default": "Kafka",
+        "description": "Underlying message transport broker."
+      }
+    },
+    "required": ["consumerSourceCode"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "hasIdempotencyCheck": { "type": "boolean" },
+      "hasDeadLetterQueue": { "type": "boolean" },
+      "concurrencyRisks": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "recommendedDeduplicationPattern": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "id": "openapi-contract-linter",
+  "name": "OpenAPI & REST Contract Linter",
+  "category": "apis",
+  "version": "1.0.0",
+  "description": "Validates REST API designs and OpenAPI 3.x specifications against industry best practices: RFC 7807 problem details, idempotent verbs, pagination standards, and consistent kebab-case/camelCase URL casing.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "specPathOrContent": {
+        "type": "string",
+        "description": "Path to openapi.json/yaml file or raw JSON/YAML specification content."
+      },
+      "enforceRfc7807Errors": {
+        "type": "boolean",
+        "default": true,
+        "description": "Require standardized RFC 7807 (ProblemDetails) for 4xx and 5xx responses."
+      }
+    },
+    "required": ["specPathOrContent"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "compliant": { "type": "boolean" },
+      "violations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string" },
+            "method": { "type": "string" },
+            "rule": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

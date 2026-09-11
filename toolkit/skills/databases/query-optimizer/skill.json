@@ -1,0 +1,48 @@
+{
+  "id": "db-query-optimizer",
+  "name": "Database Query & Index Optimizer",
+  "category": "databases",
+  "version": "1.0.0",
+  "description": "Analyzes SQL queries, EF Core LINQ projections, missing indexes, execution plan bottlenecks, and N+1 query patterns.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "queryOrLinq": {
+        "type": "string",
+        "description": "SQL query, execution plan XML, or Entity Framework LINQ expression to analyze."
+      },
+      "databaseEngine": {
+        "type": "string",
+        "enum": ["PostgreSQL", "SQLServer", "MySQL", "SQLite"],
+        "default": "PostgreSQL",
+        "description": "Target relational database dialect and optimizer engine."
+      },
+      "tableStatsEstimatedRows": {
+        "type": "integer",
+        "description": "Estimated number of rows in the primary driving table."
+      }
+    },
+    "required": ["queryOrLinq"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "bottlenecks": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "missingIndexes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "table": { "type": "string" },
+            "columns": { "type": "array", "items": { "type": "string" } },
+            "includeColumns": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      },
+      "optimizedQuery": { "type": "string" }
+    }
+  }
+}

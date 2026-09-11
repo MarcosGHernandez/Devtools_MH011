@@ -1,0 +1,38 @@
+## Build & Artifacts
+[Bb]in/
+[Oo]bj/
+out/
+dist/
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Packages
+*.nupkg
+*.snupkg
+packages/
+
+## Databases & Local Storage
+*.db
+*.db-shm
+*.db-wal
+.devtools/*.db
+.devtools/*.db-shm
+.devtools/*.db-wal
+
+## Scaffolding & Temp
+artifacts/
+temp/
+*.log
+*.tmp
+
+## OS & Secrets
+.DS_Store
+Thumbs.db
+appsettings.Development.json
+appsettings.Local.json
+.env

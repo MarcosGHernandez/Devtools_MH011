@@ -1,0 +1,36 @@
+{
+  "id": "responsive-layout-engine",
+  "name": "Responsive Layout Engine & Fluid Grid Designer",
+  "category": "ui",
+  "version": "1.0.0",
+  "description": "Calculates responsive breakpoints, fluid clamp() typography, CSS Grid split-pane structures, and container queries for cross-device minimalist UI layouts.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "layoutType": {
+        "type": "string",
+        "enum": ["split-pane-dashboard", "master-detail", "fluid-cards-grid", "reading-feed"],
+        "default": "split-pane-dashboard",
+        "description": "The layout paradigm to generate."
+      },
+      "minViewport": {
+        "type": "string",
+        "default": "320px",
+        "description": "Minimum supported viewport width."
+      },
+      "maxViewport": {
+        "type": "string",
+        "default": "1536px",
+        "description": "Maximum desktop container width."
+      }
+    }
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "cssRules": { "type": "string" },
+      "breakpoints": { "type": "object" },
+      "fluidClampFormulas": { "type": "object" }
+    }
+  }
+}

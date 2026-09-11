@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CodeReviewReport",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "High-level summary of the code review findings."
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Overall code quality score between 0 and 100."
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["APPROVE", "REQUEST_CHANGES", "COMMENT"],
+      "description": "Final review decision."
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "criticalCount": { "type": "integer" },
+        "highCount": { "type": "integer" },
+        "mediumCount": { "type": "integer" },
+        "lowCount": { "type": "integer" }
+      },
+      "required": ["criticalCount", "highCount", "mediumCount", "lowCount"]
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ruleId": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+          },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "message": { "type": "string" },
+          "recommendation": { "type": "string" },
+          "suggestedFix": {
+            "type": "object",
+            "properties": {
+              "originalCode": { "type": "string" },
+              "replacementCode": { "type": "string" }
+            }
+          }
+        },
+        "required": ["ruleId", "severity", "file", "message", "recommendation"]
+      }
+    }
+  },
+  "required": ["summary", "score", "verdict", "metrics", "issues"]
+}

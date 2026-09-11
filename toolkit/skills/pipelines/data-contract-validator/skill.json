@@ -1,0 +1,40 @@
+{
+  "id": "data-contract-validator",
+  "name": "Data Pipeline Contract & Schema Drift Validator",
+  "category": "pipelines",
+  "version": "1.0.0",
+  "description": "Verifies data stream contracts (JSON Schema, Avro, Parquet schemas) for breaking mutations, nullability changes, precision loss, and backwards/forwards schema compatibility.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "producerSchema": {
+        "type": "string",
+        "description": "JSON Schema or Avro schema string of the producer event."
+      },
+      "consumerExpectedSchema": {
+        "type": "string",
+        "description": "Schema expected by downstream consumer pipelines."
+      },
+      "allowAdditiveChanges": {
+        "type": "boolean",
+        "default": true,
+        "description": "Whether optional new fields are allowed without breaking the contract."
+      }
+    },
+    "required": ["producerSchema", "consumerExpectedSchema"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "isCompatible": { "type": "boolean" },
+      "breakingDrifts": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "safeChanges": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

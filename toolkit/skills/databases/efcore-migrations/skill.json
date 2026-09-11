@@ -1,0 +1,36 @@
+{
+  "id": "efcore-migration-validator",
+  "name": "EF Core Migration & Schema Drift Validator",
+  "category": "databases",
+  "version": "1.0.0",
+  "description": "Verifies Entity Framework Core migrations for destructive schema changes, column drops, lock contention, and zero-downtime deployment compatibility (expand/contract pattern).",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "migrationFilePath": {
+        "type": "string",
+        "description": "Path to the C# EF Core Migration file (*.Designer.cs or *.cs)."
+      },
+      "allowDestructiveChanges": {
+        "type": "boolean",
+        "default": false,
+        "description": "Whether breaking changes like dropping non-empty tables or columns are permitted."
+      }
+    },
+    "required": ["migrationFilePath"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "isZeroDowntimeCompatible": { "type": "boolean" },
+      "breakingOperations": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "recommendations": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

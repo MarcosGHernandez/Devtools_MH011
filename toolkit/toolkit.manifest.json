@@ -1,0 +1,158 @@
+{
+  "$schema": "https://devtools.ai/schemas/toolkit-manifest.v1.json",
+  "name": "devtools-standard-toolkit",
+  "version": "1.0.0",
+  "description": "Standard high-quality prompts and skills for software development with .NET and modern architectures.",
+  "author": "AI DevTools Team",
+  "license": "MIT",
+  "compatibility": {
+    "engineVersion": ">=1.0.0",
+    "dotnetVersion": ">=8.0"
+  },
+  "prompts": [
+    {
+      "id": "code-review.system",
+      "name": "Comprehensive Code Review",
+      "description": "Audits code for Clean Code, SOLID, OWASP security vulnerabilities, and performance.",
+      "path": "prompts/code-review/system.md",
+      "rulesPath": "prompts/code-review/rules.json",
+      "outputSchema": "prompts/code-review/output-schema.json"
+    },
+    {
+      "id": "architecture.adr-generator",
+      "name": "Architecture Decision Record Generator",
+      "description": "Guides the creation of structured ADRs based on architectural trade-offs.",
+      "path": "prompts/architecture/adr-generator.md"
+    },
+    {
+      "id": "architecture.c4-analysis",
+      "name": "C4 Architecture Model & Boundary Auditor",
+      "description": "Analyzes project layers and verifies architectural boundaries and dependencies.",
+      "path": "prompts/architecture/c4-analysis.md"
+    },
+    {
+      "id": "testing.unit-test-tdd",
+      "name": "Unit Test & TDD Generator",
+      "description": "Generates robust unit tests using xUnit, FluentAssertions, and Moq with full boundary coverage.",
+      "path": "prompts/testing/unit-test-tdd.md"
+    },
+    {
+      "id": "refactoring.modernization",
+      "name": "C# Idiomatic Modernizer",
+      "description": "Modernizes legacy C# patterns to modern C# 12/13 idioms safely.",
+      "path": "prompts/refactoring/modernization.md"
+    },
+    {
+      "id": "planning.project-interview",
+      "name": "Project Architecture & Requirements Interview",
+      "description": "Conducts interactive project discovery, asks key technical questions, and formulates the optimal blueprint.",
+      "path": "prompts/planning/project-interview.md"
+    },
+    {
+      "id": "planning.scaffolding-blueprint",
+      "name": "Project Scaffolding & Directory Blueprint",
+      "description": "Designs standardized folder structure, solution layouts, and setup files.",
+      "path": "prompts/planning/scaffolding-blueprint.md"
+    },
+    {
+      "id": "ui.frontend-design-tokens",
+      "name": "Frontend Minimalist Design Tokens Generator",
+      "description": "Generates cohesive typography scales, slate palettes, and spacing tokens in CSS.",
+      "path": "prompts/ui/frontend-design-tokens.md"
+    },
+    {
+      "id": "frontend.design-system-generator",
+      "name": "Frontend Design System & Component Architect",
+      "description": "Synthesizes complete design tokens, CSS custom properties, component guidelines, and accessibility standards.",
+      "path": "prompts/frontend.design-system-generator/prompt.md",
+      "rulesPath": "prompts/frontend.design-system-generator/rules.md",
+      "outputSchema": "prompts/frontend.design-system-generator/schema.json"
+    }
+  ],
+  "skills": [
+    {
+      "id": "roslyn-analyzer",
+      "name": "Roslyn Workspace & Diagnostics Analyzer",
+      "description": "Inspects C# syntax trees, compiler warnings/errors, and semantic models.",
+      "path": "skills/roslyn-analyzer/skill.json"
+    },
+    {
+      "id": "git-inspector",
+      "name": "Git Diff & Workspace Inspector",
+      "description": "Extracts Git staged, unstaged diffs, branch status, and commit logs.",
+      "path": "skills/git-inspector/skill.json"
+    },
+    {
+      "id": "test-runner",
+      "name": "DotNet Test Runner & Analyzer",
+      "description": "Runs automated tests and extracts structured pass/fail metrics and failure traces.",
+      "path": "skills/test-runner/skill.json"
+    },
+    {
+      "id": "db-query-optimizer",
+      "name": "Database Query & Index Optimizer",
+      "description": "Analyzes SQL queries, EF Core LINQ projections, missing indexes, and N+1 query patterns.",
+      "path": "skills/databases/query-optimizer/skill.json"
+    },
+    {
+      "id": "efcore-migration-validator",
+      "name": "EF Core Migration & Schema Drift Validator",
+      "description": "Verifies EF Core migrations for destructive changes and zero-downtime compatibility.",
+      "path": "skills/databases/efcore-migrations/skill.json"
+    },
+    {
+      "id": "openapi-contract-linter",
+      "name": "OpenAPI & REST Contract Linter",
+      "description": "Validates REST API designs against RFC 7807 problem details and idempotent standards.",
+      "path": "skills/apis/openapi-contract-linter/skill.json"
+    },
+    {
+      "id": "grpc-protobuf-auditor",
+      "name": "gRPC & Protocol Buffers Compatibility Auditor",
+      "description": "Audits .proto files and gRPC services for backwards compatibility and field tag rules.",
+      "path": "skills/apis/grpc-protobuf-auditor/skill.json"
+    },
+    {
+      "id": "ui-minimalist-design-auditor",
+      "name": "Classic Minimalist UI & Design System Auditor",
+      "description": "Evaluates UI components against classic minimalist design, typographic scale, and slate palettes.",
+      "path": "skills/ui/minimalist-design-auditor/skill.json"
+    },
+    {
+      "id": "ui-accessibility-wcag",
+      "name": "WCAG 2.1 Accessibility & A11y Auditor",
+      "description": "Scans UI components and markup for WCAG 2.1 AA/AAA compliance and ARIA landmarks.",
+      "path": "skills/ui/accessibility-wcag/skill.json"
+    },
+    {
+      "id": "data-contract-validator",
+      "name": "Data Pipeline Contract & Schema Drift Validator",
+      "description": "Verifies data stream schemas (JSON Schema, Avro, Parquet) for breaking mutations and drift.",
+      "path": "skills/pipelines/data-contract-validator/skill.json"
+    },
+    {
+      "id": "streaming-idempotency",
+      "name": "Stream Processing & Idempotent Consumer Auditor",
+      "description": "Audits message consumers (Kafka, RabbitMQ, Service Bus) for exactly-once processing and DLQs.",
+      "path": "skills/pipelines/streaming-idempotency/skill.json"
+    },
+    {
+      "id": "frontend-design-system",
+      "name": "Frontend Design System & Token Generator",
+      "description": "Generates cohesive tokens (palettes, typography, spacing) adhering to classic minimalist UI.",
+      "path": "skills/ui/frontend-design-system/skill.json"
+    },
+    {
+      "id": "component-architecture",
+      "name": "Frontend Component Architecture & Hierarchy Designer",
+      "description": "Decomposes layouts into atomic components with prop contracts and state hoisting.",
+      "path": "skills/ui/component-architecture/skill.json"
+    },
+    {
+      "id": "responsive-layout-engine",
+      "name": "Responsive Layout Engine & Fluid Grid Designer",
+      "description": "Calculates responsive breakpoints, fluid clamp() typography, CSS Grid split-pane structures, and container queries.",
+      "path": "skills/ui/responsive-layout-engine/skill.json"
+    }
+  ]
+}

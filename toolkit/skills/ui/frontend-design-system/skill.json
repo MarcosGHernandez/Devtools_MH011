@@ -1,0 +1,54 @@
+{
+  "id": "frontend-design-system",
+  "name": "Frontend Design System & Token Generator",
+  "category": "ui",
+  "version": "1.0.0",
+  "description": "Generates cohesive, accessible design tokens (color palettes, fluid typography scales, spacing scales, border radii, shadows, and z-indexes) adhering to modern classic minimalist aesthetics.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "themeStyle": {
+        "type": "string",
+        "enum": ["classic-minimalist", "swiss-editorial", "slate-monochrome", "high-contrast-dark"],
+        "default": "classic-minimalist",
+        "description": "Aesthetic style and design system philosophy."
+      },
+      "primaryAccent": {
+        "type": "string",
+        "default": "#3b82f6",
+        "description": "Primary accent HEX color or neutral tone."
+      },
+      "framework": {
+        "type": "string",
+        "enum": ["CSS-Variables", "Tailwind", "DesignTokens-JSON"],
+        "default": "CSS-Variables",
+        "description": "Target format for design tokens."
+      }
+    }
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "tokenFormat": { "type": "string" },
+      "tokensCode": { "type": "string" },
+      "typographyScale": {
+        "type": "object",
+        "properties": {
+          "fontFamilySans": { "type": "string" },
+          "fontFamilyMono": { "type": "string" },
+          "sizes": { "type": "object" }
+        }
+      },
+      "colorPalette": {
+        "type": "object",
+        "properties": {
+          "background": { "type": "string" },
+          "surface": { "type": "string" },
+          "border": { "type": "string" },
+          "textPrimary": { "type": "string" },
+          "textSecondary": { "type": "string" }
+        }
+      }
+    }
+  }
+}
