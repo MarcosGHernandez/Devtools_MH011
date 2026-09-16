@@ -17,7 +17,7 @@
       },
       "ollama": {
         "endpoint": "http://localhost:11434",
-        "modelId": "qwen2.5-coder:7b"
+        "modelId": "hermes3:8b"
       }
     }
   },

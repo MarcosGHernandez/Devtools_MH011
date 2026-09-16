@@ -104,6 +104,21 @@ public sealed record PlanningChatMessage
     public string? BlueprintJson { get; init; }
 }
 
+public sealed record AttachedDocumentModel
+{
+    [JsonPropertyName("fileName")]
+    public required string FileName { get; init; }
+
+    [JsonPropertyName("fileType")]
+    public string? FileType { get; init; }
+
+    [JsonPropertyName("sizeBytes")]
+    public long SizeBytes { get; init; }
+
+    [JsonPropertyName("content")]
+    public required string Content { get; init; }
+}
+
 public sealed record PlanningChatRequest
 {
     [JsonPropertyName("sessionId")]
@@ -123,6 +138,9 @@ public sealed record PlanningChatRequest
 
     [JsonPropertyName("currentAnswers")]
     public ProjectInterviewAnswers? CurrentAnswers { get; init; }
+
+    [JsonPropertyName("attachedDocuments")]
+    public List<AttachedDocumentModel>? AttachedDocuments { get; init; }
 }
 
 public sealed record PlanningChatResponse

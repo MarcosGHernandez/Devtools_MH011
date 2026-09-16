@@ -24,6 +24,7 @@ builder.Services.AddScoped<IAgentOrchestrator>(sp =>
         skillExecutors: sp.GetServices<ISkillExecutor>()
     ));
 
+builder.Services.AddHttpClient();
 builder.Services.AddScoped(_ => DbInitializer.CreateDbContext());
 builder.Services.AddScoped<IProjectRepository, SqliteProjectRepository>();
 builder.Services.AddScoped<IKnowledgeRepository, SqliteKnowledgeRepository>();
@@ -36,6 +37,12 @@ builder.Services.AddScoped(sp =>
         sp.GetRequiredService<IKnowledgeRepository>(),
         DevTools.Orchestrator.Factories.ChatClientFactory.CreateClient(config, activeProviderOverride, activeModelOverride),
         sp.GetRequiredService<IProjectScaffoldingService>()
+    ));
+
+builder.Services.AddSingleton<IContinuousImprovementService>(_ =>
+    new HermesContinuousImprovementService(
+        chatClientAccessor: () => DevTools.Orchestrator.Factories.ChatClientFactory.CreateClient(config, activeProviderOverride, activeModelOverride),
+        config: config
     ));
 
 var app = builder.Build();
@@ -188,11 +195,19 @@ app.MapPost("/api/planning/chat/stream", async (ProjectPlanningService planner, 
     context.Response.Headers.CacheControl = "no-cache";
     context.Response.Headers.Connection = "keep-alive";
 
-    await foreach (var chunk in planner.StreamPlanningChatAsync(request, ct))
+    try
     {
-        var json = System.Text.Json.JsonSerializer.Serialize(chunk);
-        await context.Response.WriteAsync($"data: {json}\n\n", ct);
-        await context.Response.Body.FlushAsync(ct);
+        await foreach (var chunk in planner.StreamPlanningChatAsync(request, ct))
+        {
+            if (ct.IsCancellationRequested) break;
+            var json = System.Text.Json.JsonSerializer.Serialize(chunk);
+            await context.Response.WriteAsync($"data: {json}\n\n", ct);
+            await context.Response.Body.FlushAsync(ct);
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // Conexión cerrada por el cliente sin lanzar error de servidor
     }
 });
 
@@ -365,60 +380,122 @@ app.MapPost("/api/ai/switch-model", (SwitchModelPayload payload) =>
     });
 });
 
+app.MapPost("/api/ai/pull-model", async (SwitchModelPayload payload, IHttpClientFactory httpClientFactory) =>
+{
+    var modelName = string.IsNullOrWhiteSpace(payload.Model) ? "hermes3:8b" : payload.Model.Trim();
+    var ollamaEndpoint = (config.Ai?.Providers != null && config.Ai.Providers.TryGetValue("ollama", out var s) && !string.IsNullOrEmpty(s.Endpoint))
+        ? s.Endpoint
+        : "http://localhost:11434/v1";
+    var baseUri = ollamaEndpoint.TrimEnd('/');
+    if (baseUri.EndsWith("/v1")) baseUri = baseUri[..^3];
+
+    var client = httpClientFactory.CreateClient();
+    client.Timeout = TimeSpan.FromMinutes(15); // Large models take time to download
+
+    try
+    {
+        var pullPayload = new { model = modelName, stream = false };
+        var resp = await client.PostAsJsonAsync($"{baseUri}/api/pull", pullPayload);
+        if (resp.IsSuccessStatusCode)
+        {
+            activeProviderOverride = "ollama";
+            activeModelOverride = modelName;
+            DevTools.Orchestrator.Factories.ChatClientFactory.CreateClient(config, activeProviderOverride, activeModelOverride);
+
+            return Results.Ok(new
+            {
+                success = true,
+                message = $"Modelo '{modelName}' descargado e inicializado exitosamente en Ollama.",
+                model = modelName
+            });
+        }
+
+        var err = await resp.Content.ReadAsStringAsync();
+        return Results.BadRequest(new { success = false, message = $"Error de Ollama al descargar {modelName}: {err}" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Fallo de conexión al descargar {modelName}: {ex.Message}");
+    }
+});
+
+// 10. Continuous Improvement & Hermes Self-Audit Endpoints
+app.MapGet("/api/improvement/metrics", async (IContinuousImprovementService svc) =>
+{
+    var metrics = await svc.GatherMetricsAsync(ResolveSolutionDir());
+    return Results.Ok(metrics);
+});
+
+app.MapPost("/api/improvement/audit", async (IContinuousImprovementService svc, HttpContext ctx) =>
+{
+    string? model = null;
+    try
+    {
+        using var reader = new StreamReader(ctx.Request.Body);
+        var body = await reader.ReadToEndAsync();
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("model", out var modelProp))
+            {
+                model = modelProp.GetString();
+            }
+        }
+    }
+    catch { }
+
+    var report = await svc.AuditProjectAsync(ResolveSolutionDir(), model, ctx.RequestAborted);
+    return Results.Ok(report);
+});
+
+app.MapGet("/api/improvement/latest", async (IContinuousImprovementService svc) =>
+{
+    var report = await svc.GetLatestReportAsync();
+    return Results.Ok(report);
+});
+
+app.MapPost("/api/improvement/proposals/{id}/status", async (string id, IContinuousImprovementService svc, HttpContext ctx) =>
+{
+    try
+    {
+        using var reader = new StreamReader(ctx.Request.Body);
+        var body = await reader.ReadToEndAsync();
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        if (doc.RootElement.TryGetProperty("status", out var stProp) &&
+            Enum.TryParse<ProposalStatus>(stProp.GetString(), true, out var status))
+        {
+            var ok = await svc.UpdateProposalStatusAsync(id, status);
+            return Results.Ok(new { success = ok });
+        }
+    }
+    catch { }
+    return Results.BadRequest(new { error = "Invalid status payload" });
+});
+
 app.Run();
 
-static string ResolveToolkitDir()
-{
-    var dir = Directory.GetCurrentDirectory();
-    while (!string.IsNullOrEmpty(dir))
-    {
-        var candidate = Path.Combine(dir, "toolkit");
-        if (Directory.Exists(candidate) && File.Exists(Path.Combine(candidate, "toolkit.manifest.json")))
-        {
-            return candidate;
-        }
-        var parent = Directory.GetParent(dir);
-        if (parent is null) break;
-        dir = parent.FullName;
-    }
-    return Path.Combine(Directory.GetCurrentDirectory(), "toolkit");
-}
+static string ResolveSolutionDir() => DevTools.Core.Common.SolutionPathResolver.FindSolutionRoot();
+
+static string ResolveToolkitDir() => DevTools.Core.Common.SolutionPathResolver.FindToolkitDirectory();
 
 static DevTools.Core.Configuration.DevToolsConfig LoadConfiguration()
 {
-    var dir = Directory.GetCurrentDirectory();
-    while (!string.IsNullOrEmpty(dir))
-    {
-        var candidate = Path.Combine(dir, "devtools.config.json");
-        if (File.Exists(candidate))
-        {
-            try
-            {
-                var json = File.ReadAllText(candidate);
-                return System.Text.Json.JsonSerializer.Deserialize<DevTools.Core.Configuration.DevToolsConfig>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                    ?? new DevTools.Core.Configuration.DevToolsConfig();
-            }
-            catch { }
-        }
-        var parent = Directory.GetParent(dir);
-        if (parent is null) break;
-        dir = parent.FullName;
-    }
-
-    var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    var homeConfig = Path.Combine(userHome, ".devtools", "config.json");
-    if (File.Exists(homeConfig))
+    var configFile = DevTools.Core.Common.SolutionPathResolver.FindConfigFile();
+    if (configFile is not null && File.Exists(configFile))
     {
         try
         {
-            var json = File.ReadAllText(homeConfig);
-            return System.Text.Json.JsonSerializer.Deserialize<DevTools.Core.Configuration.DevToolsConfig>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                ?? new DevTools.Core.Configuration.DevToolsConfig();
+            var json = File.ReadAllText(configFile);
+            var parsed = System.Text.Json.JsonSerializer.Deserialize<DevTools.Core.Configuration.DevToolsConfig>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (parsed is not null)
+            {
+                return parsed.Normalize(Path.GetDirectoryName(configFile));
+            }
         }
         catch { }
     }
 
-    return new DevTools.Core.Configuration.DevToolsConfig();
+    return new DevTools.Core.Configuration.DevToolsConfig().Normalize();
 }
 
 static string GetClassicMinimalistHtmlDashboard()
@@ -435,6 +512,10 @@ static string GetClassicMinimalistHtmlDashboard()
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
         <!-- Mermaid.js for C4 diagrams -->
         <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+        <!-- PDF.js for client-side PDF document parsing -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+        <!-- Mammoth.js for client-side Word DOCX document parsing -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
         <style>
             :root {
                 --bg: #0c0e12;
@@ -885,6 +966,144 @@ static string GetClassicMinimalistHtmlDashboard()
                 word-break: normal;
                 overflow-wrap: normal;
             }
+
+            /* Hermes 3 Scratchpad Thought Styles */
+            .hermes-thought-card {
+                background: rgba(15, 23, 42, 0.6);
+                border: 1px solid var(--border);
+                border-left: 3px solid var(--accent-blue);
+                border-radius: 6px;
+                margin: 8px 0 12px 0;
+                overflow: hidden;
+            }
+            .hermes-thought-card[open] {
+                background: rgba(15, 23, 42, 0.9);
+            }
+            .hermes-thought-summary {
+                padding: 7px 12px;
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--text-secondary);
+                cursor: pointer;
+                user-select: none;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                background: rgba(255, 255, 255, 0.02);
+            }
+            .hermes-thought-summary:hover {
+                color: var(--text-primary);
+                background: rgba(255, 255, 255, 0.04);
+            }
+
+            /* Continuous Improvement / Hermes Self-Audit */
+            .imp-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 12px;
+                margin-bottom: 20px;
+            }
+            .imp-metric-card {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 14px 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+            .imp-metric-card .label {
+                font-size: 11px;
+                color: var(--text-muted);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            .imp-metric-card .value {
+                font-size: 20px;
+                font-weight: 700;
+                color: var(--text-primary);
+                font-family: 'JetBrains Mono', monospace;
+            }
+            .imp-scores-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: 10px;
+                margin-bottom: 20px;
+            }
+            .imp-score-card {
+                background: #090b0e;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 12px;
+                text-align: center;
+            }
+            .imp-score-card .score-num {
+                font-size: 22px;
+                font-weight: 700;
+                color: var(--accent-blue);
+                font-family: 'JetBrains Mono', monospace;
+            }
+            .imp-score-card .score-lbl {
+                font-size: 11px;
+                color: var(--text-secondary);
+                margin-top: 4px;
+            }
+            .imp-proposal-card {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 16px;
+                margin-bottom: 14px;
+                transition: border-color 150ms;
+            }
+            .imp-proposal-card:hover {
+                border-color: var(--border-focus);
+            }
+            .imp-proposal-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 10px;
+                gap: 12px;
+            }
+            .imp-proposal-title {
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--text-primary);
+            }
+            .imp-action-plan-box {
+                background: #090b0e;
+                border: 1px solid var(--border);
+                border-radius: 5px;
+                padding: 10px 12px;
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 11.5px;
+                color: #d1d7e0;
+                white-space: pre-wrap;
+                margin: 10px 0;
+            }
+            .hermes-badge {
+                font-size: 9.5px;
+                font-family: 'JetBrains Mono', monospace;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                background: rgba(59, 130, 246, 0.15);
+                color: var(--accent-blue);
+                padding: 1px 6px;
+                border-radius: 3px;
+                border: 1px solid rgba(59, 130, 246, 0.3);
+            }
+            .hermes-thought-body {
+                padding: 10px 14px;
+                font-size: 11px;
+                font-family: 'JetBrains Mono', monospace;
+                color: #cbd5e1;
+                line-height: 1.55;
+                white-space: pre-wrap;
+                border-top: 1px solid var(--border-subtle);
+                background: rgba(0, 0, 0, 0.25);
+            }
+
             .chat-list-row {
                 display: flex;
                 gap: 8px;
@@ -975,25 +1194,200 @@ static string GetClassicMinimalistHtmlDashboard()
                 background: var(--surface-active);
             }
             .chat-input-container {
-                padding: 12px;
+                padding: 10px 12px;
                 border-top: 1px solid var(--border);
                 background: var(--surface);
                 display: flex;
+                flex-direction: column;
                 gap: 8px;
+                position: relative;
+                transition: border-color 150ms;
+            }
+            .chat-input-row {
+                display: flex;
+                gap: 8px;
+                align-items: flex-end;
             }
             .chat-input {
                 flex: 1;
                 background: #090b0e;
                 border: 1px solid var(--border);
-                border-radius: 5px;
+                border-radius: 6px;
                 color: var(--text-primary);
-                font-size: 12px;
-                padding: 9px 12px;
+                font-size: 12.5px;
+                font-family: inherit;
+                padding: 10px 12px;
                 outline: none;
                 transition: border-color 120ms;
+                resize: none;
+                min-height: 44px;
+                max-height: 180px;
+                line-height: 1.5;
+                box-sizing: border-box;
+                overflow-y: auto;
             }
             .chat-input:focus {
                 border-color: var(--border-focus);
+            }
+            .chat-input::placeholder {
+                color: var(--text-muted);
+            }
+            .attached-docs-bar {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                padding: 2px 0;
+            }
+            .attached-doc-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                background: #141a24;
+                border: 1px solid rgba(59, 130, 246, 0.4);
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+                font-family: 'JetBrains Mono', monospace;
+                color: #93c5fd;
+            }
+            .attached-doc-chip .doc-name {
+                max-width: 180px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .attached-doc-chip .doc-size {
+                color: var(--text-muted);
+                font-size: 10px;
+            }
+            .attached-doc-chip .doc-remove {
+                cursor: pointer;
+                color: var(--text-muted);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 14px;
+                height: 14px;
+                border-radius: 50%;
+                margin-left: 2px;
+                font-size: 13px;
+                line-height: 1;
+                transition: all 120ms;
+            }
+            .attached-doc-chip .doc-remove:hover {
+                color: #ef4444;
+                background: rgba(239, 68, 68, 0.15);
+            }
+            .btn-attach {
+                background: #14171d;
+                border: 1px solid var(--border);
+                color: var(--text-secondary);
+                border-radius: 6px;
+                width: 44px;
+                height: 44px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: all 120ms;
+                flex-shrink: 0;
+                box-sizing: border-box;
+            }
+            .btn-attach:hover {
+                color: var(--accent-blue);
+                border-color: var(--accent-blue);
+                background: var(--surface-hover);
+            }
+            .chat-input-actions {
+                display: flex;
+                gap: 6px;
+                align-items: flex-end;
+            }
+            .chat-input-actions .btn-primary {
+                height: 44px;
+                padding: 0 16px;
+                border-radius: 6px;
+            }
+            .chat-drop-overlay {
+                position: absolute;
+                inset: 0;
+                background: rgba(12, 16, 25, 0.94);
+                border: 2px dashed var(--accent-blue);
+                border-radius: 8px;
+                z-index: 50;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                color: var(--accent-blue);
+                font-weight: 600;
+                font-size: 14px;
+                pointer-events: none;
+                backdrop-filter: blur(2px);
+            }
+            .chat-drop-overlay svg {
+                width: 42px;
+                height: 42px;
+                margin-bottom: 10px;
+            }
+            .attached-doc-loading {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                background: rgba(59, 130, 246, 0.1);
+                border: 1px dashed var(--accent-blue);
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+                color: var(--accent-blue);
+            }
+            .attached-doc-card {
+                background: #0f141d;
+                border: 1px solid rgba(59, 130, 246, 0.3);
+                border-radius: 6px;
+                padding: 8px 12px;
+                margin-bottom: 8px;
+            }
+            .attached-doc-card-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 11.5px;
+                color: #93c5fd;
+                font-family: 'JetBrains Mono', monospace;
+            }
+            .attached-doc-card-meta {
+                color: var(--text-muted);
+                font-size: 10.5px;
+                margin-left: auto;
+            }
+            .attached-doc-preview-details {
+                margin-top: 6px;
+                border-top: 1px solid var(--border-subtle);
+                padding-top: 4px;
+            }
+            .attached-doc-preview-details summary {
+                font-size: 10.5px;
+                color: var(--text-secondary);
+                cursor: pointer;
+                user-select: none;
+            }
+            .attached-doc-preview-details summary:hover {
+                color: var(--text-primary);
+            }
+            .attached-doc-preview-text {
+                margin-top: 6px;
+                padding: 8px;
+                background: #090b0e;
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 10.5px;
+                color: #cbd5e1;
+                max-height: 180px;
+                overflow-y: auto;
+                white-space: pre-wrap;
+                word-break: break-word;
             }
 
             /* Buttons */
@@ -1279,6 +1673,10 @@ static string GetClassicMinimalistHtmlDashboard()
                         <svg class="icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
                         <span>Code Auditor</span>
                     </button>
+                    <button class="tab-btn" onclick="switchTab('tab-improvement', event)">
+                        <svg class="icon" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg>
+                        <span>Mejora Continua (Hermes)</span>
+                    </button>
                 </nav>
                 <div class="engine-status-badge">
                     <span class="engine-status-dot" id="engineDot" title="Ollama Conectado"></span>
@@ -1314,7 +1712,12 @@ static string GetClassicMinimalistHtmlDashboard()
                         </div>
 
                         <!-- Column 2: Interactive Copilot Chat -->
-                        <div class="panel">
+                        <div class="panel planner-chat" id="plannerChatPanel" style="position: relative;">
+                            <div class="chat-drop-overlay" id="chatDropOverlay" style="display: none;">
+                                <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                <div>Suelta aquí tus documentos</div>
+                                <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">PDF, Word (.docx), Markdown (.md), Código (.cs, .sql, .json, .txt, etc.)</div>
+                            </div>
                             <div class="panel-header" style="gap: 8px;">
                                 <div class="panel-title" style="min-width: 0; overflow: hidden; display: flex; align-items: center; gap: 7px;">
                                     <svg class="icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
@@ -1348,16 +1751,25 @@ static string GetClassicMinimalistHtmlDashboard()
                                 <div class="message assistant">
                                     Bienvenido al <strong>Copilot de Planificación y Arquitectura de Software</strong>.
                                     <br><br>
-                                    Describe el sistema que deseas construir o selecciona una plantilla rápida. El asistente formulará preguntas guiadas, diseñará el plano técnico, el diagrama C4, los ADRs y el sistema de diseño frontend.
+                                    Describe el sistema que deseas construir o selecciona una plantilla rápida. Puedes adjuntar documentos (.pdf, .docx, .md, .txt, .cs, .sql) para que el asistente analice sus requerimientos y modelos de dominio.
                                 </div>
                             </div>
 
-                            <div class="chat-input-container">
-                                <input type="text" id="chatInput" class="chat-input" placeholder="Escribe tu requerimiento o responde a las preguntas..." onkeydown="if(event.key==='Enter') sendChatMessage()">
-                                <button class="btn-primary" onclick="sendChatMessage()">
-                                    <svg class="icon" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                                    <span>Enviar</span>
-                                </button>
+                            <div class="chat-input-container" id="chatInputContainer">
+                                <div class="attached-docs-bar" id="attachedDocsBar" style="display: none;"></div>
+                                <div class="chat-input-row">
+                                    <input type="file" id="docFileInput" multiple accept=".pdf,.docx,.doc,.txt,.md,.json,.cs,.sql,.yaml,.yml,.xml,.csv,.py,.ts,.js,.html,.css" style="display: none;" onchange="handleDocAttachment(event)">
+                                    <button type="button" class="btn-attach" id="btnAttachDoc" onclick="document.getElementById('docFileInput').click()" title="Adjuntar documento o archivo (.pdf, .docx, .md, .txt, .json, .cs, .sql...)">
+                                        <svg class="icon" viewBox="0 0 24 24" style="width: 18px; height: 18px; pointer-events: none;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                                    </button>
+                                    <textarea id="chatInput" class="chat-input" rows="1" placeholder="Escribe tu requerimiento (Shift+Enter para salto de línea, Enter para enviar)..." onkeydown="handleChatKeyDown(event)" oninput="autoResizeTextarea(this)"></textarea>
+                                    <div class="chat-input-actions">
+                                        <button type="button" class="btn-primary" onclick="sendChatMessage()" id="btnSendChat">
+                                            <svg class="icon" viewBox="0 0 24 24" style="pointer-events: none;"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                                            <span>Enviar</span>
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1671,6 +2083,104 @@ static string GetClassicMinimalistHtmlDashboard()
                         </div>
                     </div>
                 </div>
+
+                <!-- 7. CONTINUOUS IMPROVEMENT (HERMES + ANTIGRAVITY) -->
+                <div id="tab-improvement" class="tab-pane">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <h2 style="font-size: 18px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px;">Mejora Continua & Auto-Auditoría (Hermes 3 + Antigravity)</h2>
+                            <p style="color: var(--text-secondary); font-size: 12.5px;">Sinergia agéntica: Razonamiento arquitectónico ISO/IEC 25010 (Nous Hermes 3) y refactorización guiada (Antigravity).</p>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <span class="badge-tag badge-blue" id="impModelBadge">Modelo: hermes3:8b</span>
+                            <button class="btn-primary" id="btnRunAudit" onclick="runHermesAudit()" style="padding: 8px 16px; font-size: 12.5px;">
+                                <svg class="icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                <span>Ejecutar Auto-Auditoría</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Metric Cards -->
+                    <div class="imp-grid">
+                        <div class="imp-metric-card">
+                            <span class="label">Proyectos .NET</span>
+                            <span class="value" id="impMetricProjects">-</span>
+                        </div>
+                        <div class="imp-metric-card">
+                            <span class="label">Archivos C#</span>
+                            <span class="value" id="impMetricCsFiles">-</span>
+                        </div>
+                        <div class="imp-metric-card">
+                            <span class="label">Líneas de Código</span>
+                            <span class="value" id="impMetricLoc">-</span>
+                        </div>
+                        <div class="imp-metric-card">
+                            <span class="label">Pruebas Unitarias</span>
+                            <span class="value" id="impMetricTests">-</span>
+                        </div>
+                        <div class="imp-metric-card">
+                            <span class="label">Clean Architecture</span>
+                            <span class="value" id="impMetricCleanArch" style="font-size: 14px; color: var(--accent-green);">Verificando...</span>
+                        </div>
+                    </div>
+
+                    <!-- ISO/IEC 25010 Quality Scores -->
+                    <div class="panel" style="margin-bottom: 18px;">
+                        <div class="panel-header">
+                            <div class="panel-title">Métricas de Calidad de Software (ISO/IEC 25010)</div>
+                            <span class="badge-tag badge-green" id="impOverallScoreBadge">Global: --/100</span>
+                        </div>
+                        <div style="padding: 16px;">
+                            <div class="imp-scores-grid">
+                                <div class="imp-score-card">
+                                    <div class="score-num" id="scoreMaintainability">--</div>
+                                    <div class="score-lbl">Mantenibilidad</div>
+                                </div>
+                                <div class="imp-score-card">
+                                    <div class="score-num" id="scoreReliability">--</div>
+                                    <div class="score-lbl">Confiabilidad</div>
+                                </div>
+                                <div class="imp-score-card">
+                                    <div class="score-num" id="scorePerformance">--</div>
+                                    <div class="score-lbl">Eficiencia / Rendimiento</div>
+                                </div>
+                                <div class="imp-score-card">
+                                    <div class="score-num" id="scoreSecurity">--</div>
+                                    <div class="score-lbl">Seguridad</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Hermes Cognitive Scratchpad -->
+                    <div class="panel" style="margin-bottom: 18px;" id="hermesThoughtPanel">
+                        <div class="panel-header">
+                            <div class="panel-title" style="display: flex; align-items: center; gap: 8px;">
+                                <span class="hermes-badge">Hermes 3</span>
+                                <span>Razonamiento Cognitivo de Arquitectura (&lt;thought&gt; Scratchpad)</span>
+                            </div>
+                            <span class="badge-tag badge-blue">ISO/IEC 25010</span>
+                        </div>
+                        <div style="padding: 16px;">
+                            <div class="code-box" id="hermesThoughtContent" style="white-space: pre-wrap; font-size: 12px; color: #a9b7c6; background: #07090c; border: 1px solid var(--border); padding: 14px; border-radius: 6px; max-height: 240px; overflow-y: auto;">
+                                Haz clic en 'Ejecutar Auto-Auditoría' para ver el análisis cognitivo de Hermes 3 en tiempo real.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Proposals List -->
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div class="panel-title">Propuestas de Mejora y Refactorización Priorizadas</div>
+                            <span class="badge-tag badge-blue" id="impProposalsCount">0 Propuestas</span>
+                        </div>
+                        <div style="padding: 16px;" id="impProposalsContainer">
+                            <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 24px;">
+                                Cargando métricas y catálogo de mejoras continuas...
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </main>
 
             <footer>
@@ -1711,6 +2221,7 @@ static string GetClassicMinimalistHtmlDashboard()
                 if (tabId === 'tab-knowledge') refreshKnowledge();
                 if (tabId === 'tab-toolkit') refreshToolkit();
                 if (tabId === 'tab-overview') refreshOverview();
+                if (tabId === 'tab-improvement') refreshImprovementTab();
             }
 
             function switchBpSubtab(subtabId, ev) {
@@ -1911,14 +2422,232 @@ static string GetClassicMinimalistHtmlDashboard()
                 document.getElementById('dirTreeBox').textContent = '/* Arbol de directorios */';
             }
 
+            let pendingAttachedDocuments = [];
+
+            function autoResizeTextarea(el) {
+                if (!el) return;
+                el.style.height = 'auto';
+                el.style.height = Math.min(el.scrollHeight, 180) + 'px';
+            }
+
+            function handleChatKeyDown(event) {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    sendChatMessage();
+                }
+            }
+
+            async function handleDocAttachment(event) {
+                const files = event.target.files;
+                if (!files || files.length === 0) return;
+                await processFiles(Array.from(files));
+                event.target.value = '';
+            }
+
+            async function extractTextFromPdf(arrayBuffer) {
+                if (typeof pdfjsLib === 'undefined') {
+                    throw new Error('Biblioteca PDF.js no disponible.');
+                }
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+                const pdf = await loadingTask.promise;
+                let fullText = '';
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str).join(' ');
+                    fullText += `\n--- Página ${i} ---\n` + pageText;
+                }
+                return { text: fullText.trim(), pageCount: pdf.numPages };
+            }
+
+            async function extractTextFromDocx(arrayBuffer) {
+                if (typeof mammoth === 'undefined') {
+                    throw new Error('Biblioteca Mammoth.js no disponible.');
+                }
+                const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+                return result.value || '';
+            }
+
+            function readFileAsText(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(reader.error);
+                    reader.readAsText(file, 'utf-8');
+                });
+            }
+
+            function readFileAsArrayBuffer(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(reader.error);
+                    reader.readAsArrayBuffer(file);
+                });
+            }
+
+            function getExtension(name) {
+                const idx = name.lastIndexOf('.');
+                return idx >= 0 ? name.substring(idx + 1).toLowerCase() : 'txt';
+            }
+
+            async function processFiles(fileList) {
+                const bar = document.getElementById('attachedDocsBar');
+                if (bar) bar.style.display = 'flex';
+
+                for (const file of fileList) {
+                    if (file.size > 30 * 1024 * 1024) {
+                        alert('El archivo "' + file.name + '" supera el límite de 30 MB.');
+                        continue;
+                    }
+
+                    const ext = getExtension(file.name);
+                    const loadingChip = document.createElement('div');
+                    loadingChip.className = 'attached-doc-loading';
+                    loadingChip.innerHTML = `<span class="status-spinner"></span> Procesando "${escapeHtml(file.name)}"...`;
+                    if (bar) bar.appendChild(loadingChip);
+
+                    try {
+                        let content = '';
+                        let pageCount = null;
+
+                        if (ext === 'pdf') {
+                            const buffer = await readFileAsArrayBuffer(file);
+                            const pdfRes = await extractTextFromPdf(buffer);
+                            content = pdfRes.text;
+                            pageCount = pdfRes.pageCount;
+                        } else if (ext === 'docx') {
+                            const buffer = await readFileAsArrayBuffer(file);
+                            content = await extractTextFromDocx(buffer);
+                        } else {
+                            content = await readFileAsText(file);
+                        }
+
+                        if (!content || content.trim().length === 0) {
+                            alert('No se pudo extraer texto del archivo "' + file.name + '". Comprueba que contenga texto legible.');
+                            loadingChip.remove();
+                            continue;
+                        }
+
+                        const wordCount = content.trim().split(/\s+/).length;
+
+                        pendingAttachedDocuments.push({
+                            fileName: file.name,
+                            fileType: ext,
+                            sizeBytes: file.size,
+                            pageCount: pageCount,
+                            wordCount: wordCount,
+                            content: content
+                        });
+                    } catch (err) {
+                        console.error('Error al procesar archivo:', err);
+                        alert('Error al leer el archivo "' + file.name + '": ' + err.message);
+                    } finally {
+                        loadingChip.remove();
+                    }
+                }
+                renderAttachedDocsBar();
+            }
+
+            function removeAttachedDoc(index) {
+                pendingAttachedDocuments.splice(index, 1);
+                renderAttachedDocsBar();
+            }
+
+            function renderAttachedDocsBar() {
+                const bar = document.getElementById('attachedDocsBar');
+                if (!bar) return;
+                const loadingChips = Array.from(bar.querySelectorAll('.attached-doc-loading'));
+                bar.innerHTML = '';
+                loadingChips.forEach(c => bar.appendChild(c));
+
+                if (pendingAttachedDocuments.length === 0 && loadingChips.length === 0) {
+                    bar.style.display = 'none';
+                    return;
+                }
+                bar.style.display = 'flex';
+
+                pendingAttachedDocuments.forEach((doc, idx) => {
+                    const chip = document.createElement('div');
+                    chip.className = 'attached-doc-chip';
+                    const formattedSize = doc.sizeBytes < 1024 ? doc.sizeBytes + ' B' : (doc.sizeBytes / 1024).toFixed(1) + ' KB';
+                    const pageText = doc.pageCount ? ` - ${doc.pageCount} pág.` : '';
+                    const wordText = doc.wordCount ? ` - ${doc.wordCount} pal.` : '';
+                    chip.innerHTML = `
+                        <svg class="icon" viewBox="0 0 24 24" style="width: 12px; height: 12px; flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                        <span class="doc-name" title="${escapeHtml(doc.fileName)}">${escapeHtml(doc.fileName)}</span>
+                        <span class="doc-size">(${formattedSize}${pageText || wordText})</span>
+                        <span class="doc-remove" onclick="removeAttachedDoc(${idx})" title="Eliminar archivo">&times;</span>
+                    `;
+                    bar.appendChild(chip);
+                });
+            }
+
+            function setupDragAndDrop() {
+                const panel = document.getElementById('plannerChatPanel') || document.querySelector('.panel.planner-chat');
+                const overlay = document.getElementById('chatDropOverlay');
+                if (!panel || !overlay) return;
+
+                let dragCounter = 0;
+
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    window.addEventListener(eventName, (e) => {
+                        if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+                            e.preventDefault();
+                        }
+                    }, false);
+                });
+
+                panel.addEventListener('dragenter', (e) => {
+                    if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+                        e.preventDefault();
+                        dragCounter++;
+                        overlay.style.display = 'flex';
+                    }
+                }, false);
+
+                panel.addEventListener('dragover', (e) => {
+                    if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+                        e.preventDefault();
+                    }
+                }, false);
+
+                panel.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    dragCounter--;
+                    if (dragCounter <= 0) {
+                        dragCounter = 0;
+                        overlay.style.display = 'none';
+                    }
+                }, false);
+
+                panel.addEventListener('drop', async (e) => {
+                    e.preventDefault();
+                    dragCounter = 0;
+                    overlay.style.display = 'none';
+                    const dt = e.dataTransfer;
+                    if (dt && dt.files && dt.files.length > 0) {
+                        await processFiles(Array.from(dt.files));
+                    }
+                }, false);
+            }
+
             async function sendChatMessage(customMsg) {
                 const input = document.getElementById('chatInput');
                 const message = customMsg || input.value.trim();
-                if (!message) return;
+                if (!message && pendingAttachedDocuments.length === 0) return;
 
-                if (!customMsg) input.value = '';
+                const docsToSend = [...pendingAttachedDocuments];
+                pendingAttachedDocuments = [];
+                renderAttachedDocsBar();
 
-                appendChatMessage('user', message, [], new Date().toISOString());
+                if (!customMsg) {
+                    input.value = '';
+                    input.style.height = 'auto';
+                }
+
+                appendChatMessage('user', message || '(Documentos adjuntos enviados)', [], new Date().toISOString(), docsToSend);
 
                 const feed = document.getElementById('chatFeed');
 
@@ -1959,8 +2688,9 @@ static string GetClassicMinimalistHtmlDashboard()
                         body: JSON.stringify({
                             sessionId: currentSessionId,
                             projectId: currentProjectId,
-                            userMessage: message,
-                            currentAnswers: currentAnswers
+                            userMessage: message || 'Procesa y analiza detalladamente los documentos adjuntos.',
+                            currentAnswers: currentAnswers,
+                            attachedDocuments: docsToSend
                         })
                     });
 
@@ -2191,9 +2921,58 @@ static string GetClassicMinimalistHtmlDashboard()
             function renderMarkdown(md) {
                 if (!md) return '';
 
-                // 1. Extract code blocks with triple backticks and replace with placeholders
+                // 1. Extract Hermes Thought Scratchpad blocks
+                const thoughtBlocks = [];
+                let text = md.replace(/<details class="hermes-thought-card">[\s\S]*?<summary>(.*?)<\/summary>([\s\S]*?)<\/details>/gi, function(match, summary, body) {
+                    const idx = thoughtBlocks.length;
+                    thoughtBlocks.push(`<details class="hermes-thought-card" open><summary class="hermes-thought-summary"><span class="hermes-badge">Hermes 3</span> ${escapeHtml(summary)}</summary><div class="hermes-thought-body">${escapeHtml(body.trim())}</div></details>`);
+                    return `___THOUGHTBLOCK_${idx}___`;
+                });
+                text = text.replace(/<thought>([\s\S]*?)<\/thought>/gi, function(match, body) {
+                    const idx = thoughtBlocks.length;
+                    thoughtBlocks.push(`<details class="hermes-thought-card" open><summary class="hermes-thought-summary"><span class="hermes-badge">Hermes 3</span> Razonamiento Arquitectonico</summary><div class="hermes-thought-body">${escapeHtml(body.trim())}</div></details>`);
+                    return `___THOUGHTBLOCK_${idx}___`;
+                });
+
+                // 1.5 Extract Attached Documents block (from history)
+                const attachedCards = [];
+                text = text.replace(/### DOCUMENTOS ADJUNTOS \/ CONTEXTO T[EÉ]CNICO PROPORCIONADO POR EL USUARIO:[\s\S]*?(?=### REQUERIMIENTO \/ MENSAJE DEL USUARIO:|$)/gi, function(docBlock) {
+                    let cardHtml = '<div style="margin-bottom: 10px;">';
+                    const regex = /--- INICIO DOCUMENTO: (.*?) \((.*?), tipo: (.*?)\) ---([\s\S]*?)--- FIN DOCUMENTO: \1 ---/gi;
+                    let m;
+                    let count = 0;
+                    while ((m = regex.exec(docBlock)) !== null) {
+                        count++;
+                        const fname = escapeHtml(m[1].trim());
+                        const fsize = escapeHtml(m[2].trim());
+                        const ftype = escapeHtml(m[3].trim());
+                        const fcontent = escapeHtml(m[4].trim());
+                        const words = fcontent.split(/\s+/).filter(Boolean).length;
+                        cardHtml += `<div class="attached-doc-card">
+                            <div class="attached-doc-card-header">
+                                <svg class="icon" viewBox="0 0 24 24" style="width: 14px; height: 14px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                                <strong>${fname}</strong>
+                                <span class="attached-doc-card-meta">${fsize} (${ftype}) - ${words} palabras</span>
+                            </div>
+                            <details class="attached-doc-preview-details">
+                                <summary>Ver texto extraído del documento</summary>
+                                <pre class="attached-doc-preview-text">${fcontent.substring(0, 3000)}${fcontent.length > 3000 ? '\n... (truncado para vista previa)' : ''}</pre>
+                            </details>
+                        </div>`;
+                    }
+                    cardHtml += '</div>';
+                    if (count > 0) {
+                        const idx = attachedCards.length;
+                        attachedCards.push(cardHtml);
+                        return `___ATTACHEDBLOCK_${idx}___`;
+                    }
+                    return docBlock;
+                });
+                text = text.replace(/### REQUERIMIENTO \/ MENSAJE DEL USUARIO:\s*/gi, '');
+
+                // 2. Extract code blocks with triple backticks and replace with placeholders
                 const codeBlocks = [];
-                let text = md.replace(/```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g, function(match, lang, code) {
+                text = text.replace(/```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g, function(match, lang, code) {
                     const idx = codeBlocks.length;
                     const escaped = escapeHtml(code.trim());
                     const langBadge = lang ? `<div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; font-weight: 600; letter-spacing: 0.05em;">${escapeHtml(lang)}</div>` : '';
@@ -2201,7 +2980,7 @@ static string GetClassicMinimalistHtmlDashboard()
                     return `___CODEBLOCK_${idx}___`;
                 });
 
-                // 2. Parse Markdown Tables
+                // 3. Parse Markdown Tables
                 text = text.replace(/((?:\|[^\n]+\|\r?\n?)+)/g, function(tableMatch) {
                     const lines = tableMatch.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
                     if (lines.length < 2) return tableMatch;
@@ -2239,37 +3018,47 @@ static string GetClassicMinimalistHtmlDashboard()
                     return html;
                 });
 
-                // 3. Headings
+                // 4. Headings
                 text = text.replace(/^#### (.*$)/gim, '<div style="font-weight: 600; font-size: 12px; color: var(--accent-blue); margin: 10px 0 4px 0;">$1</div>');
                 text = text.replace(/^### (.*$)/gim, '<div style="font-weight: 600; font-size: 13px; color: var(--text-primary); margin: 12px 0 4px 0;">$1</div>');
                 text = text.replace(/^## (.*$)/gim, '<div style="font-weight: 700; font-size: 14px; color: var(--text-primary); margin: 14px 0 6px 0;">$1</div>');
                 text = text.replace(/^# (.*$)/gim, '<div style="font-weight: 700; font-size: 15px; color: var(--text-primary); margin: 16px 0 6px 0;">$1</div>');
 
-                // 4. Bold and Inline Code
+                // 5. Bold and Inline Code
                 text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
                 text = text.replace(/`([^`]+)`/g, function(match, code) {
                     return `<code>${escapeHtml(code)}</code>`;
                 });
 
-                // 5. Bullet points (- or *)
+                // 6. Bullet points (- or *)
                 text = text.replace(/^\s*[\-\*]\s+(.*$)/gim, '<div class="chat-list-row"><span class="chat-bullet">&bull;</span><div class="chat-list-body">$1</div></div>');
 
-                // 6. Numbered lists (1. 2. etc.)
+                // 7. Numbered lists (1. 2. etc.)
                 text = text.replace(/^\s*(\d+)\.\s+(.*$)/gim, '<div class="chat-list-row"><span class="chat-num">$1.</span><div class="chat-list-body">$2</div></div>');
 
-                // 7. Linebreaks and paragraph spacing
+                // 8. Linebreaks and paragraph spacing
                 text = text.replace(/\n\n/g, '<div style="height: 6px;"></div>');
                 text = text.replace(/\n/g, '<br>');
 
-                // 8. Restore code blocks
+                // 9. Restore code blocks
                 codeBlocks.forEach((block, idx) => {
                     text = text.replace(`___CODEBLOCK_${idx}___`, block);
+                });
+
+                // 10. Restore thought blocks
+                thoughtBlocks.forEach((block, idx) => {
+                    text = text.replace(`___THOUGHTBLOCK_${idx}___`, block);
+                });
+
+                // 11. Restore attached document cards
+                attachedCards.forEach((card, idx) => {
+                    text = text.replace(`___ATTACHEDBLOCK_${idx}___`, card);
                 });
 
                 return text;
             }
 
-            function appendChatMessage(role, text, suggestedQuestions = [], timestamp = null) {
+            function appendChatMessage(role, text, suggestedQuestions = [], timestamp = null, attachedDocs = []) {
                 const feed = document.getElementById('chatFeed');
                 const div = document.createElement('div');
                 div.className = 'message ' + role;
@@ -2291,7 +3080,33 @@ static string GetClassicMinimalistHtmlDashboard()
 
                 const bodyDiv = document.createElement('div');
                 bodyDiv.className = 'message-body';
-                bodyDiv.innerHTML = renderMarkdown(text);
+
+                if (attachedDocs && attachedDocs.length > 0) {
+                    attachedDocs.forEach(d => {
+                        const card = document.createElement('div');
+                        card.className = 'attached-doc-card';
+                        const sizeStr = d.sizeBytes < 1024 ? d.sizeBytes + ' B' : (d.sizeBytes / 1024).toFixed(1) + ' KB';
+                        const words = d.wordCount || (d.content ? d.content.trim().split(/\s+/).length : 0);
+                        const pages = d.pageCount ? ` - ${d.pageCount} páginas` : '';
+                        card.innerHTML = `
+                            <div class="attached-doc-card-header">
+                                <svg class="icon" viewBox="0 0 24 24" style="width: 14px; height: 14px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                                <strong>${escapeHtml(d.fileName)}</strong>
+                                <span class="attached-doc-card-meta">${sizeStr}${pages} (${words} palabras)</span>
+                            </div>
+                            <details class="attached-doc-preview-details">
+                                <summary>Ver texto extraído del documento</summary>
+                                <pre class="attached-doc-preview-text">${escapeHtml((d.content || '').substring(0, 3000))}${(d.content || '').length > 3000 ? '\n... (truncado para vista previa)' : ''}</pre>
+                            </details>
+                        `;
+                        bodyDiv.appendChild(card);
+                    });
+                }
+
+                const contentSpan = document.createElement('div');
+                contentSpan.innerHTML = renderMarkdown(text);
+                bodyDiv.appendChild(contentSpan);
+
                 div.appendChild(bodyDiv);
 
                 if (suggestedQuestions && suggestedQuestions.length > 0) {
@@ -2326,13 +3141,25 @@ static string GetClassicMinimalistHtmlDashboard()
                         dot.title = 'Ollama Conectado';
 
                         // Add options for installed models
+                        let hasHermes = false;
                         (data.installedModels || []).forEach(m => {
                             const opt = document.createElement('option');
                             opt.value = m;
-                            opt.textContent = m + (m === data.activeModel ? ' [Activo]' : '');
+                            const isHermes = m.toLowerCase().includes('hermes');
+                            if (isHermes) hasHermes = true;
+                            const hermesTag = isHermes ? ' [Hermes 3 Agente]' : '';
+                            opt.textContent = m + hermesTag + (m === data.activeModel ? ' [Activo]' : '');
                             if (m === data.activeModel) opt.selected = true;
                             sel.appendChild(opt);
                         });
+
+                        // Option to pull hermes3:8b if not present
+                        if (!hasHermes) {
+                            const optPull = document.createElement('option');
+                            optPull.value = '__pull_hermes__';
+                            optPull.textContent = '+ Descargar hermes3:8b (Nous Hermes 3 Agente)';
+                            sel.appendChild(optPull);
+                        }
 
                         // Offline option
                         const optOff = document.createElement('option');
@@ -2354,6 +3181,40 @@ static string GetClassicMinimalistHtmlDashboard()
             }
 
             async function switchEngineModel(model) {
+                if (model === '__pull_hermes__') {
+                    const confirmPull = confirm('¿Deseas descargar el modelo Nous Hermes 3 (hermes3:8b, ~4.7 GB) en Ollama para dotar al agente de razonamiento avanzado con scratchpad (<thought>)?');
+                    if (!confirmPull) {
+                        await loadEngineStatus();
+                        return;
+                    }
+
+                    const sel = document.getElementById('engineSelect');
+                    sel.disabled = true;
+                    if (sel.options[sel.selectedIndex]) {
+                        sel.options[sel.selectedIndex].textContent = 'Descargando hermes3:8b en Ollama (aguarda)...';
+                    }
+
+                    try {
+                        const res = await fetch('/api/ai/pull-model', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ model: 'hermes3:8b' })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            alert(data.message);
+                        } else {
+                            alert('Aviso al descargar modelo: ' + data.message);
+                        }
+                    } catch (e) {
+                        alert('Error al descargar modelo en Ollama: ' + e.message);
+                    } finally {
+                        sel.disabled = false;
+                        await loadEngineStatus();
+                    }
+                    return;
+                }
+
                 try {
                     const res = await fetch('/api/ai/switch-model', {
                         method: 'POST',
@@ -2694,6 +3555,166 @@ static string GetClassicMinimalistHtmlDashboard()
                 }
             }
 
+            // Continuous Improvement JavaScript
+            async function refreshImprovementTab() {
+                try {
+                    const res = await fetch('/api/improvement/latest');
+                    if (res.ok) {
+                        const report = await res.json();
+                        if (report) {
+                            renderAuditReport(report);
+                            return;
+                        }
+                    }
+                } catch(e) {}
+
+                try {
+                    const mRes = await fetch('/api/improvement/metrics');
+                    if (mRes.ok) {
+                        const metrics = await mRes.json();
+                        renderMetricsOnly(metrics);
+                    }
+                } catch(e) {}
+            }
+
+            function renderMetricsOnly(metrics) {
+                if (!metrics) return;
+                const p = document.getElementById('impMetricProjects');
+                const c = document.getElementById('impMetricCsFiles');
+                const l = document.getElementById('impMetricLoc');
+                const t = document.getElementById('impMetricTests');
+                const a = document.getElementById('impMetricCleanArch');
+
+                if (p) p.innerText = metrics.totalProjects || 0;
+                if (c) c.innerText = metrics.totalCSharpFiles || 0;
+                if (l) l.innerText = (metrics.totalLinesOfCode || 0).toLocaleString();
+                if (t) t.innerText = metrics.totalTestCases || 0;
+                if (a) a.innerText = metrics.cleanArchitectureCompliant ? "Conforme" : "Revisar";
+            }
+
+            function renderAuditReport(report) {
+                if (!report) return;
+                if (report.metrics) renderMetricsOnly(report.metrics);
+
+                const mb = document.getElementById('impModelBadge');
+                if (mb) mb.innerText = 'Modelo: ' + (report.modelUsed || 'hermes3:8b');
+
+                if (report.qualityScores) {
+                    const ob = document.getElementById('impOverallScoreBadge');
+                    if (ob) ob.innerText = `Global: ${report.qualityScores.overallQualityScore}/100`;
+                    const sm = document.getElementById('scoreMaintainability');
+                    if (sm) sm.innerText = report.qualityScores.maintainabilityScore + '%';
+                    const sr = document.getElementById('scoreReliability');
+                    if (sr) sr.innerText = report.qualityScores.reliabilityScore + '%';
+                    const sp = document.getElementById('scorePerformance');
+                    if (sp) sp.innerText = report.qualityScores.performanceScore + '%';
+                    const ss = document.getElementById('scoreSecurity');
+                    if (ss) ss.innerText = report.qualityScores.securityScore + '%';
+                }
+
+                if (report.thoughtScratchpad) {
+                    const tc = document.getElementById('hermesThoughtContent');
+                    if (tc) tc.innerText = report.thoughtScratchpad;
+                }
+
+                const container = document.getElementById('impProposalsContainer');
+                const proposals = report.proposals || [];
+                const pc = document.getElementById('impProposalsCount');
+                if (pc) pc.innerText = `${proposals.length} Propuestas`;
+
+                if (!container) return;
+                if (proposals.length === 0) {
+                    container.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 24px;">No se registran propuestas pendientes.</div>';
+                    return;
+                }
+
+                let html = '';
+                proposals.forEach(p => {
+                    const impactClass = p.impact === 'Critical' ? 'badge-red' : (p.impact === 'High' ? 'badge-amber' : 'badge-blue');
+                    const statusClass = p.status === 'Applied' ? 'badge-green' : (p.status === 'InProgress' ? 'badge-amber' : 'badge-blue');
+
+                    html += `
+                    <div class="imp-proposal-card">
+                        <div class="imp-proposal-header">
+                            <div>
+                                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap;">
+                                    <span class="badge-tag badge-blue" style="font-family: 'JetBrains Mono', monospace;">${escapeHtml(p.id)}</span>
+                                    <span class="badge-tag ${impactClass}">Impacto: ${escapeHtml(p.impact)}</span>
+                                    <span class="badge-tag badge-blue">${escapeHtml(p.category)}</span>
+                                    <span class="badge-tag ${statusClass}" id="status-badge-${p.id}">${escapeHtml(p.status)}</span>
+                                </div>
+                                <div class="imp-proposal-title">${escapeHtml(p.title)}</div>
+                                <div style="font-size: 11px; color: var(--accent-blue); font-family: 'JetBrains Mono', monospace; margin-top: 2px;">
+                                    Archivo: ${escapeHtml(p.targetFile)}
+                                </div>
+                            </div>
+                            <div>
+                                <select onchange="changeProposalStatus('${p.id}', this.value)" style="background: var(--surface-active); border: 1px solid var(--border); color: var(--text-primary); font-size: 11px; padding: 4px 8px; border-radius: 4px; outline: none;">
+                                    <option value="Pending" ${p.status === 'Pending' ? 'selected' : ''}>Pendiente</option>
+                                    <option value="InProgress" ${p.status === 'InProgress' ? 'selected' : ''}>En Progreso</option>
+                                    <option value="Applied" ${p.status === 'Applied' ? 'selected' : ''}>Aplicado</option>
+                                    <option value="Dismissed" ${p.status === 'Dismissed' ? 'selected' : ''}>Descartado</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style="color: var(--text-secondary); font-size: 12px; margin-bottom: 8px; line-height: 1.5;">
+                            ${escapeHtml(p.description)}
+                        </div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 8px;">
+                            Plan de Accion Antigravity:
+                        </div>
+                        <div class="imp-action-plan-box">${escapeHtml(p.antigravityActionPlan)}</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">
+                            <strong>Criterio de Verificacion:</strong> ${escapeHtml(p.verificationCriteria)}
+                        </div>
+                    </div>`;
+                });
+                container.innerHTML = html;
+            }
+
+            async function runHermesAudit() {
+                const btn = document.getElementById('btnRunAudit');
+                const origHtml = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<span class="status-spinner" style="display:inline-block; vertical-align:middle; margin-right:6px;"></span> Auditando con Hermes 3...';
+
+                try {
+                    const res = await fetch('/api/improvement/audit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ model: 'hermes3:8b' })
+                    });
+                    if (res.ok) {
+                        const report = await res.json();
+                        renderAuditReport(report);
+                    } else {
+                        alert('Error al ejecutar la auditoria de Hermes.');
+                    }
+                } catch(e) {
+                    alert('Fallo de red al comunicar con el motor de auditoria: ' + e.message);
+                } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = origHtml;
+                }
+            }
+
+            async function changeProposalStatus(proposalId, newStatus) {
+                try {
+                    const res = await fetch(`/api/improvement/proposals/${proposalId}/status`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: newStatus })
+                    });
+                    if (res.ok) {
+                        const badge = document.getElementById(`status-badge-${proposalId}`);
+                        if (badge) {
+                            badge.innerText = newStatus;
+                            badge.className = 'badge-tag ' + (newStatus === 'Applied' ? 'badge-green' : (newStatus === 'InProgress' ? 'badge-amber' : 'badge-blue'));
+                        }
+                    }
+                } catch(e) {}
+            }
+
             // Init sample code in reviewer
             document.getElementById('reviewCodeInput').value = "public class OrderService\n{\n    private string apiKey = \"sk-live-1234567890abcdef\";\n\n    public Order ProcessOrder(int orderId)\n    {\n        // Anti-pattern: sync-over-async\n        var order = FetchOrderFromApiAsync(orderId).Result;\n        return order;\n    }\n\n    private async Task<Order> FetchOrderFromApiAsync(int id) => new Order();\n}";
 
@@ -2701,6 +3722,7 @@ static string GetClassicMinimalistHtmlDashboard()
             loadProjectsSidebar();
             refreshOverview();
             loadEngineStatus();
+            setupDragAndDrop();
         </script>
     </body>
     </html>

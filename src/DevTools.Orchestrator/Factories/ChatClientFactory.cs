@@ -148,7 +148,13 @@ public static class ChatClientFactory
         return null;
     }
 
-    private static string? PickBestModel(string preferredModel, List<string> installedModels)
+    public static bool IsHermesModel(string? modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) return false;
+        return modelName.Contains("hermes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string? PickBestModel(string preferredModel, List<string> installedModels)
     {
         if (installedModels.Count == 0) return null;
 
@@ -156,31 +162,47 @@ public static class ChatClientFactory
         var exact = installedModels.FirstOrDefault(m => string.Equals(m, preferredModel, StringComparison.OrdinalIgnoreCase));
         if (exact is not null) return exact;
 
-        // 2. Any qwen2.5-coder
+        // 2. If preferred model requested Hermes or Hermes variant
+        if (preferredModel.Contains("hermes", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestedHermes = installedModels.FirstOrDefault(m => m.Contains("hermes", StringComparison.OrdinalIgnoreCase));
+            if (requestedHermes is not null) return requestedHermes;
+        }
+
+        // 3. Priority for Hermes 3 autonomous agent models if requested or preferred
+        var hermes3 = installedModels.FirstOrDefault(m => m.Contains("hermes3", StringComparison.OrdinalIgnoreCase));
+        if (hermes3 is not null && (preferredModel.Contains("hermes", StringComparison.OrdinalIgnoreCase) || preferredModel.Contains("agent", StringComparison.OrdinalIgnoreCase)))
+            return hermes3;
+
+        // 4. Any qwen2.5-coder
         var qwenCoder = installedModels.FirstOrDefault(m => m.Contains("qwen2.5-coder", StringComparison.OrdinalIgnoreCase));
         if (qwenCoder is not null) return qwenCoder;
 
-        // 3. Any qwen
+        // 5. Any Hermes model generally available
+        var generalHermes = installedModels.FirstOrDefault(m => m.Contains("hermes", StringComparison.OrdinalIgnoreCase));
+        if (generalHermes is not null) return generalHermes;
+
+        // 6. Any qwen
         var qwen = installedModels.FirstOrDefault(m => m.Contains("qwen", StringComparison.OrdinalIgnoreCase));
         if (qwen is not null) return qwen;
 
-        // 4. llama3.1
+        // 7. llama3.1
         var llama31 = installedModels.FirstOrDefault(m => m.Contains("llama3.1", StringComparison.OrdinalIgnoreCase));
         if (llama31 is not null) return llama31;
 
-        // 5. llama3.2
+        // 8. llama3.2
         var llama32 = installedModels.FirstOrDefault(m => m.Contains("llama3.2", StringComparison.OrdinalIgnoreCase));
         if (llama32 is not null) return llama32;
 
-        // 6. mistral
+        // 9. mistral
         var mistral = installedModels.FirstOrDefault(m => m.Contains("mistral", StringComparison.OrdinalIgnoreCase));
         if (mistral is not null) return mistral;
 
-        // 7. sentinel-chat
+        // 10. sentinel-chat
         var sentinel = installedModels.FirstOrDefault(m => m.Contains("sentinel-chat", StringComparison.OrdinalIgnoreCase));
         if (sentinel is not null) return sentinel;
 
-        // 8. Fallback to first non-embed model
+        // 11. Fallback to first non-embed model
         var nonEmbed = installedModels.FirstOrDefault(m => !m.Contains("embed", StringComparison.OrdinalIgnoreCase));
         return nonEmbed ?? installedModels.FirstOrDefault();
     }

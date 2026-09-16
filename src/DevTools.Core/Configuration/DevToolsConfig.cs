@@ -12,6 +12,18 @@ public sealed record DevToolsConfig
 
     [JsonPropertyName("ui")]
     public UiConfig Ui { get; init; } = new();
+
+    public DevToolsConfig Normalize(string? baseDirectory = null)
+    {
+        var resolvedToolkitPath = Common.SolutionPathResolver.NormalizePath(Toolkit.Path, baseDirectory);
+        return this with
+        {
+            Toolkit = Toolkit with
+            {
+                Path = resolvedToolkitPath
+            }
+        };
+    }
 }
 
 public sealed record ToolkitConfig
@@ -39,7 +51,7 @@ public sealed record AiConfig
         ["ollama"] = new AiProviderSettings
         {
             Endpoint = "http://localhost:11434/v1",
-            ModelId = "qwen2.5-coder:7b"
+            ModelId = "hermes3:8b"
         }
     };
 }

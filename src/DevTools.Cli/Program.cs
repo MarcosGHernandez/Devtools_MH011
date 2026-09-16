@@ -280,6 +280,87 @@ public class UserService
                 }
                 break;
 
+            case "audit":
+            case "improve":
+                var targetPath = GetArgValue(args, "--target") ?? Directory.GetCurrentDirectory();
+                var modelArg = GetArgValue(args, "--model") ?? (chatClient is not null ? DevTools.Orchestrator.Factories.ChatClientFactory.CurrentResolvedModel : "hermes3:8b");
+                AnsiConsole.MarkupLine("[bold white]HERMES 3 CONTINUOUS IMPROVEMENT & ARCHITECTURAL AUDIT[/]");
+                AnsiConsole.MarkupLine($"[grey]Target Path:[/] [bold]{targetPath}[/]");
+                AnsiConsole.MarkupLine($"[grey]Model:[/] [bold blue]{modelArg}[/]\n");
+
+                var improvementService = new HermesContinuousImprovementService(
+                    chatClient: chatClient,
+                    config: config
+                );
+
+                await AnsiConsole.Status()
+                    .Spinner(Spinner.Known.Dots)
+                    .StartAsync("Scanning codebase metrics and evaluating ISO/IEC 25010 characteristics...", async _ =>
+                    {
+                        var report = await improvementService.AuditProjectAsync(targetPath, modelArg);
+
+                        AnsiConsole.MarkupLine("\n[bold white]CODEBASE METRICS SUMMARY[/]");
+                        var mTable = new Table().Border(TableBorder.Rounded);
+                        mTable.AddColumn("Metric");
+                        mTable.AddColumn("Value");
+                        mTable.AddRow("Total Projects", report.Metrics.TotalProjects.ToString());
+                        mTable.AddRow("C# Files", report.Metrics.TotalCSharpFiles.ToString());
+                        mTable.AddRow("Lines of Code", report.Metrics.TotalLinesOfCode.ToString("N0"));
+                        mTable.AddRow("Unit Tests", report.Metrics.TotalTestCases.ToString());
+                        mTable.AddRow("Clean Architecture", report.Metrics.CleanArchitectureCompliant ? "[green]Compliant[/]" : "[yellow]Review[/]");
+                        mTable.AddRow("Scan Duration", $"{report.Metrics.ScanDurationMs} ms");
+                        AnsiConsole.Write(mTable);
+
+                        AnsiConsole.MarkupLine("\n[bold white]ISO/IEC 25010 SOFTWARE QUALITY SCORES[/]");
+                        var qTable = new Table().Border(TableBorder.Rounded);
+                        qTable.AddColumn("Characteristic");
+                        qTable.AddColumn("Score");
+                        qTable.AddRow("Maintainability", $"{report.QualityScores.MaintainabilityScore}%");
+                        qTable.AddRow("Reliability", $"{report.QualityScores.ReliabilityScore}%");
+                        qTable.AddRow("Performance Efficiency", $"{report.QualityScores.PerformanceScore}%");
+                        qTable.AddRow("Security", $"{report.QualityScores.SecurityScore}%");
+                        qTable.AddRow("[bold]Overall Quality Score[/]", $"[bold green]{report.QualityScores.OverallQualityScore}/100[/]");
+                        AnsiConsole.Write(qTable);
+
+                        if (!string.IsNullOrWhiteSpace(report.ThoughtScratchpad))
+                        {
+                            AnsiConsole.MarkupLine("\n[bold blue]NOUS HERMES 3 COGNITIVE SCRATCHPAD (<thought>)[/]");
+                            var panel = new Panel(report.ThoughtScratchpad.Trim())
+                            {
+                                Header = new PanelHeader("[bold]Hermes 3 Deep Reasoning[/]"),
+                                Border = BoxBorder.Rounded
+                            };
+                            AnsiConsole.Write(panel);
+                        }
+
+                        AnsiConsole.MarkupLine("\n[bold white]PRIORITIZED CONTINUOUS IMPROVEMENT PROPOSALS[/]");
+                        var pTable = new Table().Border(TableBorder.Rounded);
+                        pTable.AddColumn("ID");
+                        pTable.AddColumn("Impact");
+                        pTable.AddColumn("Category");
+                        pTable.AddColumn("Title");
+                        pTable.AddColumn("Antigravity Directive");
+
+                        foreach (var p in report.Proposals)
+                        {
+                            var impactColor = p.Impact switch
+                            {
+                                ProposalImpact.Critical => "red",
+                                ProposalImpact.High => "yellow",
+                                _ => "blue"
+                            };
+                            pTable.AddRow(
+                                $"[grey]{p.Id}[/]",
+                                $"[{impactColor}]{p.Impact}[/]",
+                                p.Category.ToString(),
+                                p.Title,
+                                p.AntigravityActionPlan.Length > 80 ? p.AntigravityActionPlan[..77] + "..." : p.AntigravityActionPlan
+                            );
+                        }
+                        AnsiConsole.Write(pTable);
+                    });
+                break;
+
             case "docs":
                 if (args.Length >= 4 && string.Equals(args[1], "add", StringComparison.OrdinalIgnoreCase))
                 {
@@ -346,20 +427,7 @@ public class UserService
             }
         }
 
-        var dir = Directory.GetCurrentDirectory();
-        while (!string.IsNullOrEmpty(dir))
-        {
-            var candidate = Path.Combine(dir, "toolkit");
-            if (Directory.Exists(candidate) && File.Exists(Path.Combine(candidate, "toolkit.manifest.json")))
-            {
-                return candidate;
-            }
-            var parent = Directory.GetParent(dir);
-            if (parent is null) break;
-            dir = parent.FullName;
-        }
-
-        return Path.Combine(Directory.GetCurrentDirectory(), "toolkit");
+        return DevTools.Core.Common.SolutionPathResolver.FindToolkitDirectory();
     }
 
     private static void RenderHelp()
@@ -379,6 +447,7 @@ public class UserService
         table.AddRow("[bold white]knowledge [add|search][/]", "Query or store team knowledge, conventions and architectural rules");
         table.AddRow("[bold white]docs [add][/]", "List or save ADRs and generated architectural documentation");
         table.AddRow("[bold white]plan[/]", "Interactive architectural interview, C4 synthesis, ADR generation & scaffolding");
+        table.AddRow("[bold white]audit [--target][/]", "Run Hermes 3 architectural audit, ISO/IEC 25010 scoring and scratchpad");
         table.AddRow("[bold white]import <url> [cat][/]", "Extract and register a skill definition from the web/GitHub");
         table.AddRow("[bold white]git[/]", "Execute git-inspector to inspect repository status and diffs");
         table.AddRow("[bold white]help[/]", "Show this help screen");
@@ -389,37 +458,17 @@ public class UserService
 
     private static DevTools.Core.Configuration.DevToolsConfig LoadConfiguration()
     {
-        var dir = Directory.GetCurrentDirectory();
-        while (!string.IsNullOrEmpty(dir))
-        {
-            var candidate = Path.Combine(dir, "devtools.config.json");
-            if (File.Exists(candidate))
-            {
-                try
-                {
-                    var json = File.ReadAllText(candidate);
-                    return System.Text.Json.JsonSerializer.Deserialize<DevTools.Core.Configuration.DevToolsConfig>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                        ?? new DevTools.Core.Configuration.DevToolsConfig();
-                }
-                catch
-                {
-                    // Fallback default config on invalid JSON
-                }
-            }
-            var parent = Directory.GetParent(dir);
-            if (parent is null) break;
-            dir = parent.FullName;
-        }
-
-        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var homeConfig = Path.Combine(userHome, ".devtools", "config.json");
-        if (File.Exists(homeConfig))
+        var configFile = DevTools.Core.Common.SolutionPathResolver.FindConfigFile();
+        if (configFile is not null && File.Exists(configFile))
         {
             try
             {
-                var json = File.ReadAllText(homeConfig);
-                return System.Text.Json.JsonSerializer.Deserialize<DevTools.Core.Configuration.DevToolsConfig>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                    ?? new DevTools.Core.Configuration.DevToolsConfig();
+                var json = File.ReadAllText(configFile);
+                var parsed = System.Text.Json.JsonSerializer.Deserialize<DevTools.Core.Configuration.DevToolsConfig>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (parsed is not null)
+                {
+                    return parsed.Normalize(Path.GetDirectoryName(configFile));
+                }
             }
             catch
             {
@@ -427,7 +476,7 @@ public class UserService
             }
         }
 
-        return new DevTools.Core.Configuration.DevToolsConfig();
+        return new DevTools.Core.Configuration.DevToolsConfig().Normalize();
     }
 
     private static string? GetArgValue(string[] args, string flag)

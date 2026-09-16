@@ -90,6 +90,7 @@ public sealed class ProjectPlanningService
     {
         var sessionId = request.SessionId ?? Guid.NewGuid().ToString("N")[..8];
         var msg = request.UserMessage.Trim();
+        var effectiveMsg = BuildEffectiveUserPrompt(msg, request.AttachedDocuments);
 
         bool isNewProjectIntent = IsNewProjectIntent(msg) || string.IsNullOrWhiteSpace(request.ProjectId) || request.ProjectId == "null";
 
@@ -218,7 +219,7 @@ public sealed class ProjectPlanningService
         }
 
         // 1. Save user message to database history
-        await _projectRepo.AddMessageAsync(project.Id, "user", msg, cancellationToken: cancellationToken);
+        await _projectRepo.AddMessageAsync(project.Id, "user", effectiveMsg, cancellationToken: cancellationToken);
 
         // Synthesize blueprint
         var blueprint = await SynthesizePlanAsync(updatedAnswers, persistToDatabase: true, cancellationToken: cancellationToken);
@@ -229,13 +230,13 @@ public sealed class ProjectPlanningService
 
         if (_chatClient is not null)
         {
-            var (llmReply, llmQuestions) = await GenerateLlmChatTurnAsync(project, updatedAnswers, msg, cancellationToken);
+            var (llmReply, llmQuestions) = await GenerateLlmChatTurnAsync(project, updatedAnswers, effectiveMsg, cancellationToken);
             assistantReply = llmReply;
             questions = llmQuestions;
         }
         else
         {
-            var (heuristicReply, heuristicQuestions) = GenerateHeuristicChatTurn(updatedAnswers, msg);
+            var (heuristicReply, heuristicQuestions) = GenerateHeuristicChatTurn(updatedAnswers, effectiveMsg);
             assistantReply = heuristicReply;
             questions = heuristicQuestions;
         }
@@ -281,6 +282,7 @@ public sealed class ProjectPlanningService
     {
         var sessionId = request.SessionId ?? Guid.NewGuid().ToString("N")[..8];
         var msg = request.UserMessage.Trim();
+        var effectiveMsg = BuildEffectiveUserPrompt(msg, request.AttachedDocuments);
 
         bool isNewProjectIntent = IsNewProjectIntent(msg) || string.IsNullOrWhiteSpace(request.ProjectId) || request.ProjectId == "null";
 
@@ -383,7 +385,7 @@ public sealed class ProjectPlanningService
             project = await _projectRepo.RegisterProjectAsync(name, rootPath, cancellationToken: cancellationToken);
         }
 
-        await _projectRepo.AddMessageAsync(project.Id, "user", msg, cancellationToken: cancellationToken);
+        await _projectRepo.AddMessageAsync(project.Id, "user", effectiveMsg, cancellationToken: cancellationToken);
 
         var blueprint = await SynthesizePlanAsync(updatedAnswers, persistToDatabase: true, cancellationToken: cancellationToken);
 
@@ -395,32 +397,7 @@ public sealed class ProjectPlanningService
             var historyEntities = await _projectRepo.GetMessagesAsync(project.Id, cancellationToken);
             var messages = new List<ChatMessage>
             {
-                new(ChatRole.System, $"""
-                Eres el Principal Software Architect & Tech Lead de AI DevTools Studio.
-                Tu propósito es dialogar de forma ágil, analítica y de alto criterio técnico con el desarrollador, diseñando la solución ideal para su proyecto.
-
-                CONTEXTO DEL PROYECTO ACTUAL:
-                - Nombre: {updatedAnswers.ProjectName}
-                - Descripción: {updatedAnswers.Description}
-                - Estilo Arquitectónico: {updatedAnswers.ArchitecturalStyle}
-                - Frontend: {updatedAnswers.FrontendStack}
-                - Base de Datos: {updatedAnswers.DatabaseType}
-
-                DIRECTIVAS OBLIGATORIAS:
-                1. CERO EMOJIS: Queda terminantemente prohibido utilizar emojis o caracteres pictográficos en cualquier parte de tu respuesta. Usa una estética sobria, limpia y profesional.
-                2. DOMINIO CONCRETO Y RELEVANCIA: Responde de forma directa, inteligente y contextual a lo que el usuario está diciendo o solicitando. Modela y aborda explícitamente las entidades, reglas de negocio, invariantes y flujos que el usuario plantea en su requerimiento específico, diseñando agregados y atributos clave según el dominio consultado. Queda prohibido responder con textos genéricos o cambiar de tema.
-                3. CRITERIO ARQUITECTÓNICO: Explica el diseño de capas en .NET 9 Clean Architecture (Domain, Application, Infrastructure, Web/Api), EF Core 9, concurrencia, reglas de negocio encapsuladas, y la estrategia de persistencia relacional.
-                4. FORMATO: Utiliza Markdown bien estructurado (negritas, subtítulos `###`, listas y bloques de código cuando aporten valor).
-                5. PREGUNTAS SUGERIDAS: Al final de tu mensaje, incluye EXACTAMENTE 3 preguntas técnicas relevantes y contextuales para seguir guiando la arquitectura, delimitadas ESTRICTAMENTE así:
-                [PREGUNTAS_SUGERIDAS]
-                - Pregunta técnica 1
-                - Pregunta técnica 2
-                - Pregunta técnica 3
-                [/PREGUNTAS_SUGERIDAS]
-                6. HABILIDADES DE AGENTE CRUD: Tienes capacidad y autoridad ejecutiva para diseñar, modificar y refinar la arquitectura. Si el usuario te ordena modificar el stack, agregar tecnologías (como Redis, Kafka, RabbitMQ), renombrar el proyecto o alterar convenciones, asume el rol ejecutivo, confirma detalladamente los cambios aplicados en la arquitectura y explica su impacto técnico sin titubear.
-                7. COMPATIBILIDAD CON GOOGLE ANTIGRAVITY Y DOCUMENTACION: El sistema genera documentación de nivel enterprise para pasar directamente a Google Antigravity y agentes de IA: AGENTS.md (con reglas de aislamiento de capas .NET 9 Clean Architecture, estándares C# 13, comandos CLI de verificación y cero emojis), .agents/AGENTS.md, README.md, ARCHITECTURE.md (con diagrama C4 Mermaid) y ADR-001. Cuando el usuario pregunte por Antigravity o documentación para codificación, confirma con seguridad estas capacidades y explica cómo se estructura y exporta.
-                8. FEEDBACK DE CALIDAD Y COMPLETITUD DE REQUISITOS (ISO/IEC 25010): Evalúa activamente la completitud de los requerimientos del proyecto contra estándares de calidad de software (ISO/IEC 25010: adecuación funcional, confiabilidad, seguridad, eficiencia de desempeño, mantenibilidad y portabilidad). No te limites a asentir: evalúa qué requisitos críticos faltan por especificar (políticas de tolerancia a fallos, concurrencia, límites operativos, reglas de negocio de borde, RBAC) y haz preguntas concretas para cerrar las brechas antes de comenzar la codificación.
-                """)
+                new(ChatRole.System, BuildSystemPrompt(updatedAnswers))
             };
 
             var recentTurns = historyEntities.TakeLast(8);
@@ -432,9 +409,9 @@ public sealed class ProjectPlanningService
                 messages.Add(new ChatMessage(role, turn.Content));
             }
 
-            if (!messages.Any(m => m.Role == ChatRole.User && m.Text == msg))
+            if (!messages.Any(m => m.Role == ChatRole.User && m.Text == effectiveMsg))
             {
-                messages.Add(new ChatMessage(ChatRole.User, msg));
+                messages.Add(new ChatMessage(ChatRole.User, effectiveMsg));
             }
 
             var options = new ChatOptions
@@ -503,7 +480,7 @@ public sealed class ProjectPlanningService
             }
             else
             {
-                var (heuristicReply, heuristicQuestions) = GenerateHeuristicChatTurn(updatedAnswers, msg);
+                var (heuristicReply, heuristicQuestions) = GenerateHeuristicChatTurn(updatedAnswers, effectiveMsg);
                 assistantReply = heuristicReply;
                 questions = heuristicQuestions;
                 yield return new StreamingPlanningChunk { Type = "token", Content = assistantReply };
@@ -511,7 +488,7 @@ public sealed class ProjectPlanningService
         }
         else
         {
-            var (heuristicReply, heuristicQuestions) = GenerateHeuristicChatTurn(updatedAnswers, msg);
+            var (heuristicReply, heuristicQuestions) = GenerateHeuristicChatTurn(updatedAnswers, effectiveMsg);
             assistantReply = heuristicReply;
             questions = heuristicQuestions;
             yield return new StreamingPlanningChunk { Type = "token", Content = assistantReply };
@@ -1562,32 +1539,7 @@ public sealed class ProjectPlanningService
 
             var messages = new List<ChatMessage>
             {
-                new(ChatRole.System, $"""
-                Eres el Principal Software Architect & Tech Lead de AI DevTools Studio.
-                Tu propósito es dialogar de forma ágil, analítica y de alto criterio técnico con el desarrollador, diseñando la solución ideal para su proyecto.
-
-                CONTEXTO DEL PROYECTO ACTUAL:
-                - Nombre: {answers.ProjectName}
-                - Descripción: {answers.Description}
-                - Estilo Arquitectónico: {answers.ArchitecturalStyle}
-                - Frontend: {answers.FrontendStack}
-                - Base de Datos: {answers.DatabaseType}
-
-                DIRECTIVAS OBLIGATORIAS:
-                1. CERO EMOJIS: Queda terminantemente prohibido utilizar emojis o caracteres pictográficos en cualquier parte de tu respuesta. Usa una estética sobria, limpia y profesional.
-                2. DOMINIO CONCRETO Y RELEVANCIA: Responde de forma directa, inteligente y contextual a lo que el usuario está diciendo o solicitando. Modela y aborda explícitamente las entidades, reglas de negocio, invariantes y flujos que el usuario plantea en su requerimiento específico, diseñando agregados y atributos clave según el dominio consultado. Queda prohibido responder con textos genéricos o cambiar de tema.
-                3. CRITERIO ARQUITECTÓNICO: Explica el diseño de capas en .NET 9 Clean Architecture (Domain, Application, Infrastructure, Web/Api), EF Core 9, concurrencia, reglas de negocio encapsuladas, y la estrategia de persistencia relacional.
-                4. FORMATO: Utiliza Markdown bien estructurado (negritas, subtítulos `###`, listas y bloques de código cuando aporten valor).
-                5. PREGUNTAS SUGERIDAS: Al final de tu mensaje, incluye EXACTAMENTE 3 preguntas técnicas relevantes y contextuales para seguir guiando la arquitectura, delimitadas ESTRICTAMENTE así:
-                [PREGUNTAS_SUGERIDAS]
-                - Pregunta técnica 1
-                - Pregunta técnica 2
-                - Pregunta técnica 3
-                [/PREGUNTAS_SUGERIDAS]
-                6. HABILIDADES DE AGENTE CRUD: Tienes capacidad y autoridad ejecutiva para diseñar, modificar y refinar la arquitectura. Si el usuario te ordena modificar el stack, agregar tecnologías (como Redis, Kafka, RabbitMQ), renombrar el proyecto o alterar convenciones, asume el rol ejecutivo, confirma detalladamente los cambios aplicados en la arquitectura y explica su impacto técnico sin titubear.
-                7. COMPATIBILIDAD CON GOOGLE ANTIGRAVITY Y DOCUMENTACION: El sistema genera documentación de nivel enterprise para pasar directamente a Google Antigravity y agentes de IA: AGENTS.md (con reglas de aislamiento de capas .NET 9 Clean Architecture, estándares C# 13, comandos CLI de verificación y cero emojis), .agents/AGENTS.md, README.md, ARCHITECTURE.md (con diagrama C4 Mermaid) y ADR-001. Cuando el usuario pregunte por Antigravity o documentación para codificación, confirma con seguridad estas capacidades y explica cómo se estructura y exporta.
-                8. FEEDBACK DE CALIDAD Y COMPLETITUD DE REQUISITOS (ISO/IEC 25010): Evalúa activamente la completitud de los requerimientos del proyecto contra estándares de calidad de software (ISO/IEC 25010: adecuación funcional, confiabilidad, seguridad, eficiencia de desempeño, mantenibilidad y portabilidad). No te limites a asentir: evalúa qué requisitos críticos faltan por especificar (políticas de tolerancia a fallos, concurrencia, límites operativos, reglas de negocio de borde, RBAC) y haz preguntas concretas para cerrar las brechas antes de comenzar la codificación.
-                """)
+                new(ChatRole.System, BuildSystemPrompt(answers))
             };
 
             // Add previous history turns (limit last 8 messages for latency & context efficiency)
@@ -1830,20 +1782,103 @@ public sealed class ProjectPlanningService
         return questions.Take(3).ToList();
     }
 
-    private static string CleanAssistantReply(string rawText)
+    public static string BuildEffectiveUserPrompt(string userMessage, IReadOnlyList<AttachedDocumentModel>? attachedDocs)
     {
+        if (attachedDocs is null || attachedDocs.Count == 0)
+        {
+            return userMessage;
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine("### DOCUMENTOS ADJUNTOS / CONTEXTO TÉCNICO PROPORCIONADO POR EL USUARIO:");
+        sb.AppendLine("El usuario ha adjuntado los siguientes documentos o fragmentos de código para que los analices, proceses y utilices como referencia técnica estricta:");
+        sb.AppendLine();
+
+        foreach (var doc in attachedDocs)
+        {
+            var typeInfo = string.IsNullOrWhiteSpace(doc.FileType) ? "texto plano" : doc.FileType;
+            sb.AppendLine($"--- INICIO DOCUMENTO: {doc.FileName} ({doc.SizeBytes} bytes, tipo: {typeInfo}) ---");
+            sb.AppendLine(doc.Content);
+            sb.AppendLine($"--- FIN DOCUMENTO: {doc.FileName} ---");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("### REQUERIMIENTO / MENSAJE DEL USUARIO:");
+        sb.AppendLine(userMessage);
+
+        return sb.ToString().Trim();
+    }
+
+    public static string BuildSystemPrompt(ProjectInterviewAnswers answers)
+    {
+        return $"""
+        Eres el Principal Software Architect & Tech Lead de AI DevTools Studio, potenciado con la arquitectura agéntica de Nous Hermes 3.
+        Tu propósito es dialogar de forma ágil, analítica y de alto criterio técnico con el desarrollador, diseñando la solución ideal para su proyecto.
+
+        CONTEXTO DEL PROYECTO ACTUAL:
+        - Nombre: {answers.ProjectName}
+        - Descripción: {answers.Description}
+        - Estilo Arquitectónico: {answers.ArchitecturalStyle}
+        - Frontend: {answers.FrontendStack}
+        - Base de Datos: {answers.DatabaseType}
+
+        DIRECTIVAS OBLIGATORIAS:
+        1. CERO EMOJIS: Queda terminantemente prohibido utilizar emojis o caracteres pictográficos en cualquier parte de tu respuesta. Usa una estética sobria, limpia y profesional.
+        2. DOMINIO CONCRETO Y RELEVANCIA: Responde de forma directa, inteligente y contextual a lo que el usuario está diciendo o solicitando. Modela y aborda explícitamente las entidades, reglas de negocio, invariantes y flujos que el usuario plantea en su requerimiento específico, diseñando agregados y atributos clave según el dominio consultado. Queda prohibido responder con textos genéricos o cambiar de tema.
+        3. RAZONAMIENTO AGÉNTICO HERMES (<thought>):
+        Antes de emitir tu propuesta técnica o cuando se te presenten requerimientos arquitectónicos complejos, puedes utilizar un bloque de razonamiento interno delimitado por <thought>...</thought> donde analices de forma concisa:
+        - Evaluación de dominio, agregados e invariantes.
+        - Compensaciones arquitectónicas (acoplamiento, patrones, concurrencia, persistencia).
+        - Evaluación de calidad de software contra la norma ISO/IEC 25010 (mantenibilidad, confiabilidad, seguridad, eficiencia).
+        Tras cerrar </thought>, entrega directamente tu respuesta técnica estructurada, sin preámbulos vacíos.
+        4. CRITERIO ARQUITECTÓNICO: Explica el diseño de capas en .NET 9 Clean Architecture (Domain, Application, Infrastructure, Web/Api), EF Core 9, concurrencia, reglas de negocio encapsuladas, y la estrategia de persistencia relacional.
+        5. FORMATO: Utiliza Markdown bien estructurado (negritas, subtítulos `###`, listas y bloques de código cuando aporten valor).
+        6. PREGUNTAS SUGERIDAS: Al final de tu mensaje, incluye EXACTAMENTE 3 preguntas técnicas relevantes y contextuales para seguir guiando la arquitectura, delimitadas ESTRICTAMENTE así:
+        [PREGUNTAS_SUGERIDAS]
+        - Pregunta técnica 1
+        - Pregunta técnica 2
+        - Pregunta técnica 3
+        [/PREGUNTAS_SUGERIDAS]
+        7. HABILIDADES DE AGENTE CRUD: Tienes capacidad y autoridad ejecutiva para diseñar, modificar y refinar la arquitectura. Si el usuario te ordena modificar el stack, agregar tecnologías (como Redis, Kafka, RabbitMQ), renombrar el proyecto o alterar convenciones, asume el rol ejecutivo, confirma detalladamente los cambios aplicados en la arquitectura y explica su impacto técnico sin titubear.
+        8. COMPATIBILIDAD CON GOOGLE ANTIGRAVITY Y DOCUMENTACION: El sistema genera documentación de nivel enterprise para pasar directamente a Google Antigravity y agentes de IA: AGENTS.md (con reglas de aislamiento de capas .NET 9 Clean Architecture, estándares C# 13, comandos CLI de verificación y cero emojis), .agents/AGENTS.md, README.md, ARCHITECTURE.md (con diagrama C4 Mermaid) y ADR-001. Cuando el usuario pregunte por Antigravity o documentación para codificación, confirma con seguridad estas capacidades y explica cómo se estructura y exporta.
+        9. FEEDBACK DE CALIDAD Y COMPLETITUD DE REQUISITOS (ISO/IEC 25010): Evalúa activamente la completitud de los requerimientos del proyecto contra estándares de calidad de software (ISO/IEC 25010: adecuación funcional, confiabilidad, seguridad, eficiencia de desempeño, mantenibilidad y portabilidad). No te limites a asentir: evalúa qué requisitos críticos faltan por especificar (políticas de tolerancia a fallos, concurrencia, límites operativos, reglas de negocio de borde, RBAC) y haz preguntas concretas para cerrar las brechas antes de comenzar la codificación.
+        10. DOCUMENTOS ADJUNTOS Y CONTEXTO TÉCNICO: Cuando el usuario adjunte documentos (código fuente C#, SQL, especificaciones JSON/YAML, requerimientos Markdown o diagramas), procesa y analiza su contenido exhaustivamente. Extrae entidades de negocio, esquemas de tablas, modelos de dominio, configuraciones o directrices arquitectónicas contenidas en los documentos. En tu scratchpad (<thought>), razona sobre los documentos adjuntos y luego refleja sus dependencias, restricciones y modelos en tu respuesta técnica y en el plano arquitectónico.
+        """;
+    }
+
+    public static (string? Thought, string CleanedText) ExtractThought(string rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return (null, string.Empty);
+
+        var thoughtStart = rawText.IndexOf("<thought>", StringComparison.OrdinalIgnoreCase);
+        var thoughtEnd = rawText.IndexOf("</thought>", StringComparison.OrdinalIgnoreCase);
+
+        if (thoughtStart >= 0 && thoughtEnd > thoughtStart)
+        {
+            var thought = rawText.Substring(thoughtStart + 9, thoughtEnd - (thoughtStart + 9)).Trim();
+            var remaining = (rawText[..thoughtStart] + rawText[(thoughtEnd + 10)..]).Trim();
+            return (thought, remaining);
+        }
+
+        return (null, rawText);
+    }
+
+    public static string CleanAssistantReply(string rawText)
+    {
+        var (thought, withoutThought) = ExtractThought(rawText);
+
         var marker = "PREGUNTAS_SUGERIDAS";
-        var startIndex = rawText.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        string textToProcess = rawText;
+        var startIndex = withoutThought.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        string textToProcess = withoutThought;
         if (startIndex >= 0)
         {
             var cutIndex = startIndex;
-            while (cutIndex > 0 && (rawText[cutIndex - 1] == '[' || rawText[cutIndex - 1] == '#' || rawText[cutIndex - 1] == ' ' || rawText[cutIndex - 1] == '\r' || rawText[cutIndex - 1] == '\n'))
+            while (cutIndex > 0 && (withoutThought[cutIndex - 1] == '[' || withoutThought[cutIndex - 1] == '#' || withoutThought[cutIndex - 1] == ' ' || withoutThought[cutIndex - 1] == '\r' || withoutThought[cutIndex - 1] == '\n'))
             {
                 cutIndex--;
-                if (rawText[cutIndex] == '\n') break;
+                if (withoutThought[cutIndex] == '\n') break;
             }
-            textToProcess = rawText[..cutIndex].Trim();
+            textToProcess = withoutThought[..cutIndex].Trim();
         }
 
         // Deduplicate pathological loop repetitions from LLMs
@@ -1868,7 +1903,15 @@ public sealed class ProjectPlanningService
             sb.AppendLine(line);
         }
 
-        return StripEmojis(sb.ToString().Trim());
+        var cleanedResponse = StripEmojis(sb.ToString().Trim());
+
+        if (!string.IsNullOrWhiteSpace(thought))
+        {
+            var cleanThought = StripEmojis(thought.Trim());
+            return $"<details class=\"hermes-thought-card\"><summary>Razonamiento de Hermes 3 (Scratchpad)</summary>\n\n{cleanThought}\n\n</details>\n\n{cleanedResponse}";
+        }
+
+        return cleanedResponse;
     }
 
     private static string StripEmojis(string text)
