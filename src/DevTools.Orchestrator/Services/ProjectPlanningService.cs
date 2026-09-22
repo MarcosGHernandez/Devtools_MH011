@@ -67,7 +67,81 @@ public sealed class ProjectPlanningService
                 cancellationToken: cancellationToken
             );
 
-            // 3. Persist Key Conventions in Knowledge Base
+            // 3. Persist PRD in Documentation
+            if (!string.IsNullOrWhiteSpace(blueprint.PrdMarkdown))
+            {
+                await _docRepo.SaveDocumentAsync(
+                    title: $"{answers.ProjectName} - Product Requirements Document",
+                    docType: "PRD",
+                    markdownContent: blueprint.PrdMarkdown,
+                    projectId: project.Id,
+                    version: "1.0.0",
+                    cancellationToken: cancellationToken
+                );
+            }
+
+            // 4. Persist Spec Kit Suite in Documentation
+            if (blueprint.SpecKit is not null)
+            {
+                var specKitComposite = $"""
+                # Spec Kit: {answers.ProjectName}
+
+                ## 1. Constitución
+                {blueprint.SpecKit.ConstitutionMarkdown}
+
+                ---
+
+                ## 2. Especificación
+                {blueprint.SpecKit.SpecMarkdown}
+
+                ---
+
+                ## 3. Plan Técnico
+                {blueprint.SpecKit.PlanMarkdown}
+
+                ---
+
+                ## 4. Tareas
+                {blueprint.SpecKit.TasksMarkdown}
+                """;
+
+                await _docRepo.SaveDocumentAsync(
+                    title: $"{answers.ProjectName} - Spec Kit Specification",
+                    docType: "SpecKit",
+                    markdownContent: specKitComposite,
+                    projectId: project.Id,
+                    version: "1.0.0",
+                    cancellationToken: cancellationToken
+                );
+            }
+
+            // 5. Persist AGENTS.md in Documentation
+            if (!string.IsNullOrWhiteSpace(blueprint.AgentsMarkdown))
+            {
+                await _docRepo.SaveDocumentAsync(
+                    title: $"{answers.ProjectName} - Agent Coding Directives",
+                    docType: "AgentsMd",
+                    markdownContent: blueprint.AgentsMarkdown,
+                    projectId: project.Id,
+                    version: "1.0.0",
+                    cancellationToken: cancellationToken
+                );
+            }
+
+            // 6. Persist Suggestions in Documentation
+            if (!string.IsNullOrWhiteSpace(blueprint.SuggestionsMarkdown))
+            {
+                await _docRepo.SaveDocumentAsync(
+                    title: $"{answers.ProjectName} - Architectural Suggestions & Roadmap",
+                    docType: "Suggestions",
+                    markdownContent: blueprint.SuggestionsMarkdown,
+                    projectId: project.Id,
+                    version: "1.0.0",
+                    cancellationToken: cancellationToken
+                );
+            }
+
+            // 7. Persist Key Conventions in Knowledge Base
             foreach (var convention in blueprint.KeyConventions)
             {
                 await _knowledgeRepo.AddKnowledgeAsync(
@@ -1206,6 +1280,286 @@ public sealed class ProjectPlanningService
             };
         }
 
+        // 11. PRD (PRODUCT REQUIREMENTS DOCUMENT) CRUD
+        if (project is not null && (
+            lower.Contains("prd") ||
+            lower.Contains("documento de requerimientos") ||
+            lower.Contains("requerimientos de producto")))
+        {
+            var bp = TryGetBlueprint(project.LatestBlueprintJson)
+                ?? await SynthesizePlanAsync(answers, persistToDatabase: false, cancellationToken: cancellationToken);
+
+            if (lower.Contains("elimina") || lower.Contains("borra"))
+            {
+                var docs = await _docRepo.ListDocumentsAsync(project.Id, "PRD", cancellationToken);
+                foreach (var d in docs)
+                {
+                    await _docRepo.DeleteDocumentAsync(d.Id, cancellationToken);
+                }
+
+                bp = bp with { PrdMarkdown = null };
+                var bpJson = JsonSerializer.Serialize(bp);
+                await _projectRepo.UpdateProjectMetadataAsync(project.Id, null, null, null, null, bpJson, cancellationToken);
+
+                var reply = $"El Documento de Requerimientos de Producto (**PRD**) de **{project.Name}** ha sido eliminado de la base de datos local.";
+                await _projectRepo.AddMessageAsync(project.Id, "user", msg, cancellationToken: cancellationToken);
+                await _projectRepo.AddMessageAsync(project.Id, "assistant", reply, cancellationToken: cancellationToken);
+
+                return new PlanningChatResponse
+                {
+                    SessionId = sessionId,
+                    ProjectId = project.Id.ToString(),
+                    AssistantReply = reply,
+                    SuggestedQuestions =
+                    [
+                        "¿Deseas generar un nuevo PRD con requerimientos específicos?",
+                        "¿Consultamos la especificación de Spec Kit?",
+                        "¿Revisamos el diagrama C4?"
+                    ],
+                    UpdatedAnswers = answers,
+                    GeneratedBlueprint = bp,
+                    ReadyToScaffold = true,
+                    ExecutedAction = new AgentActionResult
+                    {
+                        ActionType = AgentActionType.DeleteDocument,
+                        Success = true,
+                        AffectedEntityId = project.Id.ToString(),
+                        AffectedEntityName = "PRD",
+                        UpdatedBlueprint = bp,
+                        Message = "PRD eliminado exitosamente."
+                    }
+                };
+            }
+            else
+            {
+                var prdContent = SpecKitDocumentationGenerator.GeneratePrd(answers, bp);
+                await _docRepo.SaveDocumentAsync(
+                    title: $"{project.Name} - Product Requirements Document",
+                    docType: "PRD",
+                    markdownContent: prdContent,
+                    projectId: project.Id,
+                    version: "1.0.0",
+                    cancellationToken: cancellationToken
+                );
+
+                bp = bp with { PrdMarkdown = prdContent };
+                var bpJson = JsonSerializer.Serialize(bp);
+                await _projectRepo.UpdateProjectMetadataAsync(project.Id, null, null, null, null, bpJson, cancellationToken);
+
+                var downloadUrl = $"/api/planning/projects/{project.Id}/export-prd";
+                var reply = $"Como Agente de Arquitectura, he generado y sincronizado el **Documento de Requerimientos de Producto (PRD)** profesional para **{project.Name}**.\n\nContiene la Visión del Producto, Personas Clave, User Journeys, Requerimientos Funcionales (FR-01..N), Requerimientos No Funcionales (SLA <200ms p95, Disponibilidad 99.9%), Invariantes de Dominio y Métricas de Éxito.\n\nPuedes consultarlo en la pestaña **PRD (Requerimientos)** o descargarlo en: [Descargar PRD.md]({downloadUrl}).";
+
+                await _projectRepo.AddMessageAsync(project.Id, "user", msg, cancellationToken: cancellationToken);
+                await _projectRepo.AddMessageAsync(project.Id, "assistant", reply, cancellationToken: cancellationToken);
+
+                return new PlanningChatResponse
+                {
+                    SessionId = sessionId,
+                    ProjectId = project.Id.ToString(),
+                    AssistantReply = reply,
+                    SuggestedQuestions =
+                    [
+                        "¿Deseas revisar o exportar la suite completa de GitHub Spec Kit?",
+                        "¿Generamos el scaffolding físico en disco?",
+                        "¿Añadimos reglas específicas para los agentes en AGENTS.md?"
+                    ],
+                    UpdatedAnswers = answers,
+                    GeneratedBlueprint = bp,
+                    ReadyToScaffold = true,
+                    ExecutedAction = new AgentActionResult
+                    {
+                        ActionType = AgentActionType.CreatePrd,
+                        Success = true,
+                        AffectedEntityId = project.Id.ToString(),
+                        AffectedEntityName = $"{project.Name} PRD",
+                        DownloadUrl = downloadUrl,
+                        UpdatedBlueprint = bp,
+                        Message = "PRD profesional generado y persistido exitosamente."
+                    }
+                };
+            }
+        }
+
+        // 12. GITHUB SPEC KIT (SPEC-DRIVEN DEVELOPMENT) CRUD
+        if (project is not null && (
+            lower.Contains("spec kit") ||
+            lower.Contains("speckit") ||
+            lower.Contains("spec-kit") ||
+            lower.Contains("constitucion") ||
+            lower.Contains("constitution") ||
+            lower.Contains("spec-driven")))
+        {
+            var bp = TryGetBlueprint(project.LatestBlueprintJson)
+                ?? await SynthesizePlanAsync(answers, persistToDatabase: false, cancellationToken: cancellationToken);
+
+            if (lower.Contains("elimina") || lower.Contains("borra"))
+            {
+                var docs = await _docRepo.ListDocumentsAsync(project.Id, "SpecKit", cancellationToken);
+                foreach (var d in docs)
+                {
+                    await _docRepo.DeleteDocumentAsync(d.Id, cancellationToken);
+                }
+
+                bp = bp with { SpecKit = null };
+                var bpJson = JsonSerializer.Serialize(bp);
+                await _projectRepo.UpdateProjectMetadataAsync(project.Id, null, null, null, null, bpJson, cancellationToken);
+
+                var reply = $"La especificación **Spec Kit** de **{project.Name}** ha sido eliminada de la base de datos local SQLite.";
+                await _projectRepo.AddMessageAsync(project.Id, "user", msg, cancellationToken: cancellationToken);
+                await _projectRepo.AddMessageAsync(project.Id, "assistant", reply, cancellationToken: cancellationToken);
+
+                return new PlanningChatResponse
+                {
+                    SessionId = sessionId,
+                    ProjectId = project.Id.ToString(),
+                    AssistantReply = reply,
+                    SuggestedQuestions =
+                    [
+                        "¿Deseas generar un nuevo Spec Kit?",
+                        "¿Verificamos los requerimientos en el PRD?",
+                        "¿Revisamos el diagrama C4?"
+                    ],
+                    UpdatedAnswers = answers,
+                    GeneratedBlueprint = bp,
+                    ReadyToScaffold = true,
+                    ExecutedAction = new AgentActionResult
+                    {
+                        ActionType = AgentActionType.DeleteDocument,
+                        Success = true,
+                        AffectedEntityId = project.Id.ToString(),
+                        AffectedEntityName = "SpecKit",
+                        UpdatedBlueprint = bp,
+                        Message = "Spec Kit eliminado exitosamente."
+                    }
+                };
+            }
+            else
+            {
+                var specKit = SpecKitDocumentationGenerator.GenerateSpecKit(answers, bp);
+                var specKitComposite = $"""
+                # Spec Kit: {project.Name}
+
+                ## 1. Constitución
+                {specKit.ConstitutionMarkdown}
+
+                ---
+
+                ## 2. Especificación
+                {specKit.SpecMarkdown}
+
+                ---
+
+                ## 3. Plan Técnico
+                {specKit.PlanMarkdown}
+
+                ---
+
+                ## 4. Tareas
+                {specKit.TasksMarkdown}
+                """;
+
+                await _docRepo.SaveDocumentAsync(
+                    title: $"{project.Name} - Spec Kit Specification",
+                    docType: "SpecKit",
+                    markdownContent: specKitComposite,
+                    projectId: project.Id,
+                    version: "1.0.0",
+                    cancellationToken: cancellationToken
+                );
+
+                bp = bp with { SpecKit = specKit };
+                var bpJson = JsonSerializer.Serialize(bp);
+                await _projectRepo.UpdateProjectMetadataAsync(project.Id, null, null, null, null, bpJson, cancellationToken);
+
+                var downloadUrl = $"/api/planning/projects/{project.Id}/export-speckit";
+                var reply = $"Como Agente de Arquitectura, he integrado y generado la suite **GitHub Spec Kit (Spec-Driven Development)** para **{project.Name}**:\n\n- **`.spec-kit/constitution.md`**: Principios inmutables de Clean Architecture y compuertas de decisión.\n- **`.spec-kit/spec.md`**: Especificación técnica formal con contratos de datos y requerimientos funcionales/no-funcionales.\n- **`.spec-kit/plan.md`**: Plan técnico de capas, dependencias y topología.\n- **`.spec-kit/tasks.md`**: Plan de tareas accionables desglosado en 5 fases.\n\nPuedes explorarlo en la pestaña **Spec Kit (SDD)** o descargar el paquete ZIP en: [Descargar Spec Kit ZIP]({downloadUrl}).";
+
+                await _projectRepo.AddMessageAsync(project.Id, "user", msg, cancellationToken: cancellationToken);
+                await _projectRepo.AddMessageAsync(project.Id, "assistant", reply, cancellationToken: cancellationToken);
+
+                return new PlanningChatResponse
+                {
+                    SessionId = sessionId,
+                    ProjectId = project.Id.ToString(),
+                    AssistantReply = reply,
+                    SuggestedQuestions =
+                    [
+                        "¿Deseas estructurar en disco incluyendo la carpeta .spec-kit/?",
+                        "¿Revisamos el PRD o las sugerencias de arquitectura?",
+                        "¿Verificamos las directivas en AGENTS.md?"
+                    ],
+                    UpdatedAnswers = answers,
+                    GeneratedBlueprint = bp,
+                    ReadyToScaffold = true,
+                    ExecutedAction = new AgentActionResult
+                    {
+                        ActionType = AgentActionType.CreateSpecKit,
+                        Success = true,
+                        AffectedEntityId = project.Id.ToString(),
+                        AffectedEntityName = $"{project.Name} Spec Kit",
+                        DownloadUrl = downloadUrl,
+                        UpdatedBlueprint = bp,
+                        Message = "GitHub Spec Kit generado y sincronizado exitosamente."
+                    }
+                };
+            }
+        }
+
+        // 13. SUGGESTIONS & ROADMAP READ/UPDATE
+        if (project is not null && (
+            lower.Contains("sugerencias") ||
+            lower.Contains("roadmap") ||
+            lower.Contains("hoja de ruta") ||
+            lower.Contains("recomendaciones de arquitectura")))
+        {
+            var bp = TryGetBlueprint(project.LatestBlueprintJson)
+                ?? await SynthesizePlanAsync(answers, persistToDatabase: false, cancellationToken: cancellationToken);
+
+            var suggestions = SpecKitDocumentationGenerator.GenerateSuggestionsAndRoadmap(answers, bp);
+            await _docRepo.SaveDocumentAsync(
+                title: $"{project.Name} - Architectural Suggestions & Roadmap",
+                docType: "Suggestions",
+                markdownContent: suggestions,
+                projectId: project.Id,
+                version: "1.0.0",
+                cancellationToken: cancellationToken
+            );
+
+            bp = bp with { SuggestionsMarkdown = suggestions };
+            var bpJson = JsonSerializer.Serialize(bp);
+            await _projectRepo.UpdateProjectMetadataAsync(project.Id, null, null, null, null, bpJson, cancellationToken);
+
+            var reply = $"Como Agente de Arquitectura, he generado las **Sugerencias Arquitectónicas ISO/IEC 25010 y Hoja de Ruta (Roadmap)** para **{project.Name}**:\n\n- **SUG-001**: Patrón Outbox Transaccional para consistencia eventual.\n- **SUG-002**: Estrategia de Caché Multinivel (L1 + L2 Redis).\n- **SUG-003**: Trazabilidad distribuida con OpenTelemetry.\n- **SUG-004**: Llaves de Idempotencia en solicitudes POST.\n- **Roadmap**: 5 fases de entrega desde MVP Core hasta preparación para producción.\n\nPuedes revisarlo en la pestaña **Sugerencias & Roadmap**.";
+
+            await _projectRepo.AddMessageAsync(project.Id, "user", msg, cancellationToken: cancellationToken);
+            await _projectRepo.AddMessageAsync(project.Id, "assistant", reply, cancellationToken: cancellationToken);
+
+            return new PlanningChatResponse
+            {
+                SessionId = sessionId,
+                ProjectId = project.Id.ToString(),
+                AssistantReply = reply,
+                SuggestedQuestions =
+                [
+                    "¿Deseas incorporar alguna de estas sugerencias en las convenciones del proyecto?",
+                    "¿Estructuramos la solución en disco?",
+                    "¿Revisamos el PRD o el Spec Kit?"
+                ],
+                UpdatedAnswers = answers,
+                GeneratedBlueprint = bp,
+                ReadyToScaffold = true,
+                ExecutedAction = new AgentActionResult
+                {
+                    ActionType = AgentActionType.ReadDocument,
+                    Success = true,
+                    AffectedEntityId = project.Id.ToString(),
+                    AffectedEntityName = "Suggestions & Roadmap",
+                    UpdatedBlueprint = bp,
+                    Message = "Sugerencias y roadmap generados exitosamente."
+                }
+            };
+        }
+
         return null;
     }
 
@@ -1507,9 +1861,10 @@ public sealed class ProjectPlanningService
             TokensCss = tokensCss
         };
 
-        return new ProjectPlanBlueprint
+        var baseBp = new ProjectPlanBlueprint
         {
             ProjectName = answers.ProjectName,
+            ArchitecturalStyle = style,
             ExecutiveSummary = $"Architectural blueprint for '{answers.ProjectName}'. Designed for {answers.TargetUsers} to solve: {answers.Description}.",
             ArchitecturalRationale = $"Adopted {style} to balance operational simplicity with robust domain separation, backed by {db} and a {frontend} frontend.",
             TechStack = stack,
@@ -1519,6 +1874,19 @@ public sealed class ProjectPlanningService
             InitialAdrContent = adrContent,
             KeyConventions = keyConventions,
             FrontendDesignSpec = frontendSpec
+        };
+
+        var specKit = SpecKitDocumentationGenerator.GenerateSpecKit(answers, baseBp);
+        var prd = SpecKitDocumentationGenerator.GeneratePrd(answers, baseBp);
+        var agents = SpecKitDocumentationGenerator.GenerateAdvancedAgentsMarkdown(baseBp);
+        var suggestions = SpecKitDocumentationGenerator.GenerateSuggestionsAndRoadmap(answers, baseBp);
+
+        return baseBp with
+        {
+            SpecKit = specKit,
+            PrdMarkdown = prd,
+            AgentsMarkdown = agents,
+            SuggestionsMarkdown = suggestions
         };
     }
 
@@ -1843,6 +2211,8 @@ public sealed class ProjectPlanningService
         8. COMPATIBILIDAD CON GOOGLE ANTIGRAVITY Y DOCUMENTACION: El sistema genera documentación de nivel enterprise para pasar directamente a Google Antigravity y agentes de IA: AGENTS.md (con reglas de aislamiento de capas .NET 9 Clean Architecture, estándares C# 13, comandos CLI de verificación y cero emojis), .agents/AGENTS.md, README.md, ARCHITECTURE.md (con diagrama C4 Mermaid) y ADR-001. Cuando el usuario pregunte por Antigravity o documentación para codificación, confirma con seguridad estas capacidades y explica cómo se estructura y exporta.
         9. FEEDBACK DE CALIDAD Y COMPLETITUD DE REQUISITOS (ISO/IEC 25010): Evalúa activamente la completitud de los requerimientos del proyecto contra estándares de calidad de software (ISO/IEC 25010: adecuación funcional, confiabilidad, seguridad, eficiencia de desempeño, mantenibilidad y portabilidad). No te limites a asentir: evalúa qué requisitos críticos faltan por especificar (políticas de tolerancia a fallos, concurrencia, límites operativos, reglas de negocio de borde, RBAC) y haz preguntas concretas para cerrar las brechas antes de comenzar la codificación.
         10. DOCUMENTOS ADJUNTOS Y CONTEXTO TÉCNICO: Cuando el usuario adjunte documentos (código fuente C#, SQL, especificaciones JSON/YAML, requerimientos Markdown o diagramas), procesa y analiza su contenido exhaustivamente. Extrae entidades de negocio, esquemas de tablas, modelos de dominio, configuraciones o directrices arquitectónicas contenidas en los documentos. En tu scratchpad (<thought>), razona sobre los documentos adjuntos y luego refleja sus dependencias, restricciones y modelos en tu respuesta técnica y en el plano arquitectónico.
+        11. GITHUB SPEC KIT (SPEC-DRIVEN DEVELOPMENT - SDD): El sistema integra nativamente GitHub Spec Kit (.spec-kit/): constitution.md (principios inmutables y compuertas de decisión), spec.md (especificación funcional formal), plan.md (plan técnico de arquitectura) y tasks.md (desglose de tareas accionables). Si el usuario solicita crear, consultar o refinar el Spec Kit, confirma su estructura y explícale cómo rige el desarrollo antes de codificar.
+        12. SUITE DOCUMENTAL COMPLETA (PRD, ADRs, SUGERENCIAS & ROADMAP): Generas y gestionas el Documento de Requerimientos de Producto (PRD.md) con Visión, Personas, User Journeys, SLAs y Criterios de Aceptación; registros de decisión técnica (ADRs); y Sugerencias de Arquitectura ISO/IEC 25010 con Hoja de Ruta por Fases. Posees control CRUD total para crear, leer, actualizar o eliminar estos documentos cuando el usuario lo solicite.
         """;
     }
 

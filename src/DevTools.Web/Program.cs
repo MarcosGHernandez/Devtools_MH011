@@ -314,6 +314,128 @@ app.MapGet("/api/planning/projects/{id}/export-agents", async (ProjectPlanningSe
     return Results.File(System.Text.Encoding.UTF8.GetBytes(markdown), "text/markdown", $"{safeName}-AGENTS.md");
 });
 
+app.MapGet("/api/planning/projects/{id}/speckit", async (ProjectPlanningService planner, IProjectRepository repo, string id, CancellationToken ct) =>
+{
+    if (!Guid.TryParse(id, out var guid)) return Results.BadRequest("Invalid project ID.");
+    var project = await repo.GetProjectByIdAsync(guid, ct);
+    if (project is null) return Results.NotFound("Project not found.");
+
+    var bp = ProjectPlanningService.TryGetBlueprint(project.LatestBlueprintJson);
+    if (bp is null)
+    {
+        var answers = new ProjectInterviewAnswers
+        {
+            ProjectName = project.Name,
+            Description = project.Description ?? "Spec Kit generation",
+            ArchitecturalStyle = project.ArchitecturalStyle ?? "Clean Architecture",
+            FrontendStack = project.FrontendStack ?? "React + Minimalist Design System",
+            DatabaseType = project.DatabaseType ?? "PostgreSQL + EF Core 9"
+        };
+        bp = await planner.SynthesizePlanAsync(answers, persistToDatabase: false, cancellationToken: ct);
+    }
+
+    bp.SpecKit ??= SpecKitDocumentationGenerator.GenerateSpecKit(bp);
+    return Results.Ok(bp.SpecKit);
+});
+
+app.MapGet("/api/planning/projects/{id}/prd", async (ProjectPlanningService planner, IProjectRepository repo, string id, CancellationToken ct) =>
+{
+    if (!Guid.TryParse(id, out var guid)) return Results.BadRequest("Invalid project ID.");
+    var project = await repo.GetProjectByIdAsync(guid, ct);
+    if (project is null) return Results.NotFound("Project not found.");
+
+    var bp = ProjectPlanningService.TryGetBlueprint(project.LatestBlueprintJson);
+    if (bp is null)
+    {
+        var answers = new ProjectInterviewAnswers
+        {
+            ProjectName = project.Name,
+            Description = project.Description ?? "PRD generation",
+            ArchitecturalStyle = project.ArchitecturalStyle ?? "Clean Architecture",
+            FrontendStack = project.FrontendStack ?? "React + Minimalist Design System",
+            DatabaseType = project.DatabaseType ?? "PostgreSQL + EF Core 9"
+        };
+        bp = await planner.SynthesizePlanAsync(answers, persistToDatabase: false, cancellationToken: ct);
+    }
+
+    var prd = bp.PrdMarkdown ?? SpecKitDocumentationGenerator.GeneratePrd(bp);
+    return Results.Ok(new { prdMarkdown = prd });
+});
+
+app.MapGet("/api/planning/projects/{id}/suggestions", async (ProjectPlanningService planner, IProjectRepository repo, string id, CancellationToken ct) =>
+{
+    if (!Guid.TryParse(id, out var guid)) return Results.BadRequest("Invalid project ID.");
+    var project = await repo.GetProjectByIdAsync(guid, ct);
+    if (project is null) return Results.NotFound("Project not found.");
+
+    var bp = ProjectPlanningService.TryGetBlueprint(project.LatestBlueprintJson);
+    if (bp is null)
+    {
+        var answers = new ProjectInterviewAnswers
+        {
+            ProjectName = project.Name,
+            Description = project.Description ?? "Suggestions generation",
+            ArchitecturalStyle = project.ArchitecturalStyle ?? "Clean Architecture",
+            FrontendStack = project.FrontendStack ?? "React + Minimalist Design System",
+            DatabaseType = project.DatabaseType ?? "PostgreSQL + EF Core 9"
+        };
+        bp = await planner.SynthesizePlanAsync(answers, persistToDatabase: false, cancellationToken: ct);
+    }
+
+    var suggestions = bp.SuggestionsMarkdown ?? SpecKitDocumentationGenerator.GenerateSuggestionsAndRoadmap(bp);
+    return Results.Ok(new { suggestionsMarkdown = suggestions });
+});
+
+app.MapGet("/api/planning/projects/{id}/export-speckit", async (ProjectPlanningService planner, IProjectRepository repo, string id, CancellationToken ct) =>
+{
+    if (!Guid.TryParse(id, out var guid)) return Results.BadRequest("Invalid project ID.");
+    var project = await repo.GetProjectByIdAsync(guid, ct);
+    if (project is null) return Results.NotFound("Project not found.");
+
+    var bp = ProjectPlanningService.TryGetBlueprint(project.LatestBlueprintJson);
+    if (bp is null)
+    {
+        var answers = new ProjectInterviewAnswers
+        {
+            ProjectName = project.Name,
+            Description = project.Description ?? "Spec Kit ZIP export",
+            ArchitecturalStyle = project.ArchitecturalStyle ?? "Clean Architecture",
+            FrontendStack = project.FrontendStack ?? "React + Minimalist Design System",
+            DatabaseType = project.DatabaseType ?? "PostgreSQL + EF Core 9"
+        };
+        bp = await planner.SynthesizePlanAsync(answers, persistToDatabase: false, cancellationToken: ct);
+    }
+
+    var zipBytes = await planner.ScaffoldingService.GenerateSpecKitZipAsync(bp, ct);
+    var safeName = project.Name.Replace(" ", "-").ToLowerInvariant();
+    return Results.File(zipBytes, "application/zip", $"{safeName}-spec-kit.zip");
+});
+
+app.MapGet("/api/planning/projects/{id}/export-prd", async (ProjectPlanningService planner, IProjectRepository repo, string id, CancellationToken ct) =>
+{
+    if (!Guid.TryParse(id, out var guid)) return Results.BadRequest("Invalid project ID.");
+    var project = await repo.GetProjectByIdAsync(guid, ct);
+    if (project is null) return Results.NotFound("Project not found.");
+
+    var bp = ProjectPlanningService.TryGetBlueprint(project.LatestBlueprintJson);
+    if (bp is null)
+    {
+        var answers = new ProjectInterviewAnswers
+        {
+            ProjectName = project.Name,
+            Description = project.Description ?? "PRD Markdown export",
+            ArchitecturalStyle = project.ArchitecturalStyle ?? "Clean Architecture",
+            FrontendStack = project.FrontendStack ?? "React + Minimalist Design System",
+            DatabaseType = project.DatabaseType ?? "PostgreSQL + EF Core 9"
+        };
+        bp = await planner.SynthesizePlanAsync(answers, persistToDatabase: false, cancellationToken: ct);
+    }
+
+    var prdMarkdown = await planner.ScaffoldingService.GeneratePrdMarkdownAsync(bp, ct);
+    var safeName = project.Name.Replace(" ", "-").ToLowerInvariant();
+    return Results.File(System.Text.Encoding.UTF8.GetBytes(prdMarkdown), "text/markdown", $"{safeName}-PRD.md");
+});
+
 app.MapPost("/api/planning/scaffold", async (ProjectPlanningService planner, ScaffoldPayload payload) =>
 {
     var targetPath = string.IsNullOrWhiteSpace(payload.TargetPath)
@@ -1791,6 +1913,10 @@ static string GetClassicMinimalistHtmlDashboard()
                                 <button class="bp-subtab" onclick="switchBpSubtab('bp-stack', event)">Stack & Convenciones</button>
                                 <button class="bp-subtab" onclick="switchBpSubtab('bp-tokens', event)">Frontend Design Tokens</button>
                                 <button class="bp-subtab" onclick="switchBpSubtab('bp-adr', event)">ADR 001 (Decisión)</button>
+                                <button class="bp-subtab" onclick="switchBpSubtab('bp-speckit', event)">Spec Kit (SDD)</button>
+                                <button class="bp-subtab" onclick="switchBpSubtab('bp-prd', event)">PRD (Requerimientos)</button>
+                                <button class="bp-subtab" onclick="switchBpSubtab('bp-suggestions', event)">Sugerencias & Roadmap</button>
+                                <button class="bp-subtab" onclick="switchBpSubtab('bp-agents', event)">AGENTS.md</button>
                                 <button class="bp-subtab" onclick="switchBpSubtab('bp-tree', event)">Estructura en Disco</button>
                             </div>
 
@@ -1867,6 +1993,77 @@ static string GetClassicMinimalistHtmlDashboard()
                                 <div id="bp-adr" class="bp-pane" style="display: none;">
                                     <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;" id="adrTitle">ADR 001</h4>
                                     <div class="code-box" id="adrContentBox" style="font-family: inherit; font-size: 12px;">/* El ADR se generará automáticamente con el análisis */</div>
+                                </div>
+
+                                <!-- Spec Kit (SDD Canonical Studio) -->
+                                <div id="bp-speckit" class="bp-pane" style="display: none;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                                        <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                                            <button class="token-subview-btn active" id="btnSpeckitConst" onclick="switchSpecKitFile('constitution')">constitution.md</button>
+                                            <button class="token-subview-btn" id="btnSpeckitSpec" onclick="switchSpecKitFile('spec')">spec.md</button>
+                                            <button class="token-subview-btn" id="btnSpeckitPlan" onclick="switchSpecKitFile('plan')">plan.md</button>
+                                            <button class="token-subview-btn" id="btnSpeckitTasks" onclick="switchSpecKitFile('tasks')">tasks.md</button>
+                                        </div>
+                                        <div style="display: flex; gap: 6px;">
+                                            <button class="btn-secondary" onclick="copyBoxContent('speckitContentBox', this)" style="font-size: 11px; padding: 4px 10px;">
+                                                <svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                                <span>Copiar</span>
+                                            </button>
+                                            <button class="btn-secondary" onclick="downloadProjectSpecKitZip()" style="font-size: 11px; padding: 4px 10px;">
+                                                <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                                <span>Descargar Spec Kit (.ZIP)</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="code-box" id="speckitContentBox" style="max-height: calc(100vh - 220px); overflow-y: auto;">/* Spec Kit (SDD) se cargará aquí */</div>
+                                </div>
+
+                                <!-- PRD Pane -->
+                                <div id="bp-prd" class="bp-pane" style="display: none;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                                        <h4 style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary);">Product Requirements Document (PRD)</h4>
+                                        <div style="display: flex; gap: 6px;">
+                                            <button class="btn-secondary" onclick="copyBoxContent('prdContentBox', this)" style="font-size: 11px; padding: 4px 10px;">
+                                                <svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                                <span>Copiar PRD</span>
+                                            </button>
+                                            <button class="btn-secondary" onclick="downloadProjectPrd()" style="font-size: 11px; padding: 4px 10px;">
+                                                <svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                                                <span>Descargar PRD (.md)</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="code-box" id="prdContentBox" style="max-height: calc(100vh - 220px); overflow-y: auto;">/* PRD se generará automáticamente con el análisis */</div>
+                                </div>
+
+                                <!-- Suggestions & Roadmap Pane -->
+                                <div id="bp-suggestions" class="bp-pane" style="display: none;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                                        <h4 style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary);">Sugerencias Tecnicas (ISO/IEC 25010) & Roadmap</h4>
+                                        <button class="btn-secondary" onclick="copyBoxContent('suggestionsContentBox', this)" style="font-size: 11px; padding: 4px 10px;">
+                                            <svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                            <span>Copiar Sugerencias</span>
+                                        </button>
+                                    </div>
+                                    <div class="code-box" id="suggestionsContentBox" style="max-height: calc(100vh - 220px); overflow-y: auto;">/* Sugerencias y roadmap se generarán automáticamente */</div>
+                                </div>
+
+                                <!-- AGENTS.md Pane -->
+                                <div id="bp-agents" class="bp-pane" style="display: none;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                                        <h4 style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary);">Directivas AGENTS.md (Antigravity, Cursor, Copilot)</h4>
+                                        <div style="display: flex; gap: 6px;">
+                                            <button class="btn-secondary" onclick="copyBoxContent('agentsContentBox', this)" style="font-size: 11px; padding: 4px 10px;">
+                                                <svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                                <span>Copiar AGENTS.md</span>
+                                            </button>
+                                            <button class="btn-secondary" onclick="downloadProjectAgentsMd()" style="font-size: 11px; padding: 4px 10px;">
+                                                <svg class="icon" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path><path d="M12 12L2.5 7.5"></path><path d="M12 12v10"></path></svg>
+                                                <span>Descargar AGENTS.md</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="code-box" id="agentsContentBox" style="max-height: calc(100vh - 220px); overflow-y: auto;">/* AGENTS.md se generará automáticamente */</div>
                                 </div>
 
                                 <!-- Directory Tree -->
@@ -2224,6 +2421,9 @@ static string GetClassicMinimalistHtmlDashboard()
                 if (tabId === 'tab-improvement') refreshImprovementTab();
             }
 
+            let currentSpecKit = null;
+            let currentSpecKitActiveFile = 'constitution';
+
             function switchBpSubtab(subtabId, ev) {
                 document.querySelectorAll('.bp-pane').forEach(el => el.style.display = 'none');
                 document.querySelectorAll('.bp-subtab').forEach(el => el.classList.remove('active'));
@@ -2232,6 +2432,49 @@ static string GetClassicMinimalistHtmlDashboard()
 
                 if (subtabId === 'bp-c4' && currentBlueprint) {
                     renderMermaid();
+                } else if (subtabId === 'bp-speckit') {
+                    if (currentBlueprint && currentBlueprint.specKit) {
+                        currentSpecKit = currentBlueprint.specKit;
+                        switchSpecKitFile(currentSpecKitActiveFile || 'constitution');
+                    } else if (currentProjectId && !currentSpecKit) {
+                        fetch('/api/planning/projects/' + currentProjectId + '/speckit')
+                            .then(r => r.ok ? r.json() : null)
+                            .then(sk => {
+                                if (sk) {
+                                    currentSpecKit = sk;
+                                    switchSpecKitFile(currentSpecKitActiveFile || 'constitution');
+                                }
+                            }).catch(console.error);
+                    } else {
+                        switchSpecKitFile(currentSpecKitActiveFile || 'constitution');
+                    }
+                } else if (subtabId === 'bp-prd') {
+                    const prdBox = document.getElementById('prdContentBox');
+                    if (prdBox && currentProjectId && (!prdBox.textContent || prdBox.textContent.startsWith('/* PRD se generará'))) {
+                        fetch('/api/planning/projects/' + currentProjectId + '/prd')
+                            .then(r => r.ok ? r.json() : null)
+                            .then(data => {
+                                if (data && data.prdMarkdown) prdBox.textContent = data.prdMarkdown;
+                            }).catch(console.error);
+                    }
+                } else if (subtabId === 'bp-suggestions') {
+                    const sugBox = document.getElementById('suggestionsContentBox');
+                    if (sugBox && currentProjectId && (!sugBox.textContent || sugBox.textContent.startsWith('/* Sugerencias y roadmap'))) {
+                        fetch('/api/planning/projects/' + currentProjectId + '/suggestions')
+                            .then(r => r.ok ? r.json() : null)
+                            .then(data => {
+                                if (data && data.suggestionsMarkdown) sugBox.textContent = data.suggestionsMarkdown;
+                            }).catch(console.error);
+                    }
+                } else if (subtabId === 'bp-agents') {
+                    const agBox = document.getElementById('agentsContentBox');
+                    if (agBox && currentProjectId && (!agBox.textContent || agBox.textContent.startsWith('/* AGENTS.md'))) {
+                        fetch('/api/planning/projects/' + currentProjectId + '/export-agents')
+                            .then(r => r.ok ? r.text() : null)
+                            .then(txt => {
+                                if (txt) agBox.textContent = txt;
+                            }).catch(console.error);
+                    }
                 }
             }
 
@@ -2420,6 +2663,15 @@ static string GetClassicMinimalistHtmlDashboard()
                 document.getElementById('tokensCssBox').textContent = '/* Tokens CSS se generarán con el proyecto */';
                 document.getElementById('adrContentBox').textContent = '/* El ADR se generará automáticamente */';
                 document.getElementById('dirTreeBox').textContent = '/* Arbol de directorios */';
+                currentSpecKit = null;
+                const spkBox = document.getElementById('speckitContentBox');
+                if (spkBox) spkBox.textContent = '/* Inicia la conversación para generar Spec Kit (SDD) */';
+                const prdBox = document.getElementById('prdContentBox');
+                if (prdBox) prdBox.textContent = '/* Inicia la conversación para generar el PRD */';
+                const sugBox = document.getElementById('suggestionsContentBox');
+                if (sugBox) sugBox.textContent = '/* Sugerencias y roadmap */';
+                const agBox = document.getElementById('agentsContentBox');
+                if (agBox) agBox.textContent = '/* AGENTS.md */';
             }
 
             let pendingAttachedDocuments = [];
@@ -3269,8 +3521,81 @@ static string GetClassicMinimalistHtmlDashboard()
                 // Tree
                 document.getElementById('dirTreeBox').textContent = bp.directoryStructure;
 
+                // Spec Kit (SDD)
+                currentSpecKit = bp.specKit || null;
+                switchSpecKitFile(currentSpecKitActiveFile || 'constitution');
+
+                // PRD
+                const prdBox = document.getElementById('prdContentBox');
+                if (prdBox) prdBox.textContent = bp.prdMarkdown || '/* PRD se generará automáticamente con el análisis */';
+
+                // Suggestions & Roadmap
+                const sugBox = document.getElementById('suggestionsContentBox');
+                if (sugBox) sugBox.textContent = bp.suggestionsMarkdown || '/* Sugerencias y roadmap se generarán automáticamente */';
+
+                // AGENTS.md
+                const agBox = document.getElementById('agentsContentBox');
+                if (agBox) agBox.textContent = bp.agentsMarkdown || '/* AGENTS.md se generará automáticamente */';
+
                 // Render Mermaid C4
                 renderMermaid();
+            }
+
+            function switchSpecKitFile(fileKey) {
+                currentSpecKitActiveFile = fileKey;
+                document.querySelectorAll('#bp-speckit .token-subview-btn').forEach(b => b.classList.remove('active'));
+                if (fileKey === 'constitution') document.getElementById('btnSpeckitConst')?.classList.add('active');
+                if (fileKey === 'spec') document.getElementById('btnSpeckitSpec')?.classList.add('active');
+                if (fileKey === 'plan') document.getElementById('btnSpeckitPlan')?.classList.add('active');
+                if (fileKey === 'tasks') document.getElementById('btnSpeckitTasks')?.classList.add('active');
+
+                const box = document.getElementById('speckitContentBox');
+                if (!box) return;
+
+                if (!currentSpecKit) {
+                    box.textContent = '/* Spec Kit no disponible aun. Escribe "genera spec kit" o guarda el plano */';
+                    return;
+                }
+
+                if (fileKey === 'constitution') box.textContent = currentSpecKit.constitutionMarkdown || '/* constitution.md vacio */';
+                else if (fileKey === 'spec') box.textContent = currentSpecKit.specMarkdown || '/* spec.md vacio */';
+                else if (fileKey === 'plan') box.textContent = currentSpecKit.planMarkdown || '/* plan.md vacio */';
+                else if (fileKey === 'tasks') box.textContent = currentSpecKit.tasksMarkdown || '/* tasks.md vacio */';
+            }
+
+            function downloadProjectSpecKitZip() {
+                if (!currentProjectId) {
+                    alert('Por favor selecciona o crea un proyecto antes de descargar el Spec Kit.');
+                    return;
+                }
+                window.location.href = '/api/planning/projects/' + currentProjectId + '/export-speckit';
+            }
+
+            function downloadProjectPrd() {
+                if (!currentProjectId) {
+                    alert('Por favor selecciona o crea un proyecto antes de descargar el PRD.');
+                    return;
+                }
+                window.location.href = '/api/planning/projects/' + currentProjectId + '/export-prd';
+            }
+
+            function copyBoxContent(boxId, btnEl) {
+                const box = document.getElementById(boxId);
+                if (!box) return;
+                const text = box.textContent || '';
+                if (!text) return;
+                navigator.clipboard.writeText(text).then(() => {
+                    if (btnEl) {
+                        const span = btnEl.querySelector('span');
+                        if (span) {
+                            const orig = span.textContent;
+                            span.textContent = 'Copiado!';
+                            setTimeout(() => { span.textContent = orig; }, 1800);
+                        }
+                    }
+                }).catch(err => {
+                    console.error('Error al copiar:', err);
+                });
             }
 
             function renderMermaid() {

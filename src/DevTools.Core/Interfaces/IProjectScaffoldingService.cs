@@ -22,4 +22,12 @@ public interface IProjectScaffoldingService
     Task<string> GenerateAgentsMarkdownAsync(
         ProjectPlanBlueprint blueprint,
         CancellationToken ct = default);
+
+    Task<string> GeneratePrdMarkdownAsync(
+        ProjectPlanBlueprint blueprint,
+        CancellationToken ct = default);
+
+    Task<byte[]> GenerateSpecKitZipAsync(
+        ProjectPlanBlueprint blueprint,
+        CancellationToken ct = default);
 }

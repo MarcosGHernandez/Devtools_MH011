@@ -21,7 +21,15 @@ public enum AgentActionType
     ScaffoldProject,
     ExportProjectZip,
     ExportDocumentation,
-    ExportAgentsMarkdown
+    ExportAgentsMarkdown,
+    CreatePrd,
+    UpdatePrd,
+    CreateSpecKit,
+    UpdateSpecKit,
+    CreateDocument,
+    UpdateDocument,
+    DeleteDocument,
+    ReadDocument
 }
 
 public sealed record AgentActionResult

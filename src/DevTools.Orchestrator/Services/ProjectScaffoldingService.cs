@@ -192,8 +192,10 @@ public class ProjectScaffoldingService : IProjectScaffoldingService
             Description = "Clean Code .editorconfig Rules"
         });
 
-        // 8. Documentation & Agent Guidelines
-        var agentsContent = GenerateAgentsMarkdown(safeName, blueprint);
+        // 8. Documentation, Spec Kit & Agent Guidelines
+        var agentsContent = !string.IsNullOrWhiteSpace(blueprint.AgentsMarkdown)
+            ? blueprint.AgentsMarkdown
+            : GenerateAgentsMarkdown(safeName, blueprint);
 
         files.Add(new ScaffoldedFile
         {
@@ -207,6 +209,96 @@ public class ProjectScaffoldingService : IProjectScaffoldingService
             RelativePath = ".agents/AGENTS.md",
             Content = agentsContent,
             Description = "Workspace Customizations Agent Rules for Antigravity"
+        });
+
+        // Spec Kit (.spec-kit/)
+        var specKit = blueprint.SpecKit ?? SpecKitDocumentationGenerator.GenerateSpecKit(
+            new ProjectInterviewAnswers
+            {
+                ProjectName = blueprint.ProjectName,
+                Description = blueprint.ExecutiveSummary,
+                ArchitecturalStyle = blueprint.ArchitecturalStyle ?? "Clean Architecture"
+            },
+            blueprint);
+
+        files.Add(new ScaffoldedFile
+        {
+            RelativePath = ".spec-kit/constitution.md",
+            Content = specKit.ConstitutionMarkdown,
+            Description = "GitHub Spec Kit: Constitution, Principles and Quality Gates"
+        });
+
+        files.Add(new ScaffoldedFile
+        {
+            RelativePath = ".spec-kit/spec.md",
+            Content = specKit.SpecMarkdown,
+            Description = "GitHub Spec Kit: Functional & Non-Functional Technical Specification"
+        });
+
+        files.Add(new ScaffoldedFile
+        {
+            RelativePath = ".spec-kit/plan.md",
+            Content = specKit.PlanMarkdown,
+            Description = "GitHub Spec Kit: Architectural Plan & Topology"
+        });
+
+        files.Add(new ScaffoldedFile
+        {
+            RelativePath = ".spec-kit/tasks.md",
+            Content = specKit.TasksMarkdown,
+            Description = "GitHub Spec Kit: Actionable Implementation Task Breakdown"
+        });
+
+        // PRD (Product Requirements Document)
+        var prdContent = !string.IsNullOrWhiteSpace(blueprint.PrdMarkdown)
+            ? blueprint.PrdMarkdown
+            : SpecKitDocumentationGenerator.GeneratePrd(
+                new ProjectInterviewAnswers
+                {
+                    ProjectName = blueprint.ProjectName,
+                    Description = blueprint.ExecutiveSummary,
+                    ArchitecturalStyle = blueprint.ArchitecturalStyle ?? "Clean Architecture"
+                },
+                blueprint);
+
+        files.Add(new ScaffoldedFile
+        {
+            RelativePath = "PRD.md",
+            Content = prdContent,
+            Description = "Product Requirements Document (Vision, Personas, Journeys, SLAs, Metrics)"
+        });
+
+        files.Add(new ScaffoldedFile
+        {
+            RelativePath = "docs/PRD.md",
+            Content = prdContent,
+            Description = "Product Requirements Document"
+        });
+
+        // Suggestions & Roadmap
+        var suggestionsContent = !string.IsNullOrWhiteSpace(blueprint.SuggestionsMarkdown)
+            ? blueprint.SuggestionsMarkdown
+            : SpecKitDocumentationGenerator.GenerateSuggestionsAndRoadmap(
+                new ProjectInterviewAnswers
+                {
+                    ProjectName = blueprint.ProjectName,
+                    Description = blueprint.ExecutiveSummary,
+                    ArchitecturalStyle = blueprint.ArchitecturalStyle ?? "Clean Architecture"
+                },
+                blueprint);
+
+        files.Add(new ScaffoldedFile
+        {
+            RelativePath = "docs/SUGGESTIONS.md",
+            Content = suggestionsContent,
+            Description = "ISO/IEC 25010 Architectural Suggestions & Phased Roadmap"
+        });
+
+        files.Add(new ScaffoldedFile
+        {
+            RelativePath = "docs/ROADMAP.md",
+            Content = suggestionsContent,
+            Description = "Engineering Implementation Roadmap"
         });
 
         files.Add(new ScaffoldedFile
@@ -347,7 +439,76 @@ public class ProjectScaffoldingService : IProjectScaffoldingService
     public Task<string> GenerateAgentsMarkdownAsync(ProjectPlanBlueprint blueprint, CancellationToken ct = default)
     {
         var safeName = SanitizeIdentifier(blueprint.ProjectName);
-        return Task.FromResult(GenerateAgentsMarkdown(safeName, blueprint));
+        return Task.FromResult(!string.IsNullOrWhiteSpace(blueprint.AgentsMarkdown) 
+            ? blueprint.AgentsMarkdown 
+            : GenerateAgentsMarkdown(safeName, blueprint));
+    }
+
+    public Task<string> GeneratePrdMarkdownAsync(ProjectPlanBlueprint blueprint, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrWhiteSpace(blueprint.PrdMarkdown))
+        {
+            return Task.FromResult(blueprint.PrdMarkdown);
+        }
+
+        var prd = SpecKitDocumentationGenerator.GeneratePrd(
+            new ProjectInterviewAnswers
+            {
+                ProjectName = blueprint.ProjectName,
+                Description = blueprint.ExecutiveSummary,
+                ArchitecturalStyle = blueprint.ArchitecturalStyle ?? "Clean Architecture"
+            },
+            blueprint);
+
+        return Task.FromResult(prd);
+    }
+
+    public async Task<byte[]> GenerateSpecKitZipAsync(ProjectPlanBlueprint blueprint, CancellationToken ct = default)
+    {
+        var specKit = blueprint.SpecKit ?? SpecKitDocumentationGenerator.GenerateSpecKit(
+            new ProjectInterviewAnswers
+            {
+                ProjectName = blueprint.ProjectName,
+                Description = blueprint.ExecutiveSummary,
+                ArchitecturalStyle = blueprint.ArchitecturalStyle ?? "Clean Architecture"
+            },
+            blueprint);
+
+        var prd = !string.IsNullOrWhiteSpace(blueprint.PrdMarkdown)
+            ? blueprint.PrdMarkdown
+            : SpecKitDocumentationGenerator.GeneratePrd(
+                new ProjectInterviewAnswers
+                {
+                    ProjectName = blueprint.ProjectName,
+                    Description = blueprint.ExecutiveSummary,
+                    ArchitecturalStyle = blueprint.ArchitecturalStyle ?? "Clean Architecture"
+                },
+                blueprint);
+
+        var specKitFiles = new List<ScaffoldedFile>
+        {
+            new() { RelativePath = ".spec-kit/constitution.md", Content = specKit.ConstitutionMarkdown },
+            new() { RelativePath = ".spec-kit/spec.md", Content = specKit.SpecMarkdown },
+            new() { RelativePath = ".spec-kit/plan.md", Content = specKit.PlanMarkdown },
+            new() { RelativePath = ".spec-kit/tasks.md", Content = specKit.TasksMarkdown },
+            new() { RelativePath = "PRD.md", Content = prd },
+            new() { RelativePath = "README.md", Content = $"# {blueprint.ProjectName} - Spec Kit Suite\n\nCanonical GitHub Spec Kit workspace files.\n" }
+        };
+
+        using var memoryStream = new MemoryStream();
+        using (var archive = new ZipArchive(memoryStream, ZipArchiveMode.Create, true, Encoding.UTF8))
+        {
+            foreach (var file in specKitFiles)
+            {
+                ct.ThrowIfCancellationRequested();
+                var entry = archive.CreateEntry(file.RelativePath, CompressionLevel.Optimal);
+                await using var entryStream = entry.Open();
+                await using var writer = new StreamWriter(entryStream, Encoding.UTF8);
+                await writer.WriteAsync(file.Content);
+            }
+        }
+
+        return memoryStream.ToArray();
     }
 
     private static string SanitizeIdentifier(string name)

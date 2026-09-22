@@ -58,6 +58,9 @@ public sealed record ProjectPlanBlueprint
     [JsonPropertyName("executiveSummary")]
     public required string ExecutiveSummary { get; init; }
 
+    [JsonPropertyName("architecturalStyle")]
+    public string? ArchitecturalStyle { get; init; }
+
     [JsonPropertyName("architecturalRationale")]
     public required string ArchitecturalRationale { get; init; }
 
@@ -81,6 +84,18 @@ public sealed record ProjectPlanBlueprint
 
     [JsonPropertyName("frontendDesignSpec")]
     public FrontendDesignSpec? FrontendDesignSpec { get; init; }
+
+    [JsonPropertyName("specKit")]
+    public SpecKitSpec? SpecKit { get; set; }
+
+    [JsonPropertyName("prdMarkdown")]
+    public string? PrdMarkdown { get; set; }
+
+    [JsonPropertyName("agentsMarkdown")]
+    public string? AgentsMarkdown { get; set; }
+
+    [JsonPropertyName("suggestionsMarkdown")]
+    public string? SuggestionsMarkdown { get; set; }
 }
 
 public sealed record PlanningChatMessage
